@@ -2,14 +2,11 @@
 /**
  * Interactive DAG Flow Canvas (product requirement 2.4 — centerpiece view).
  *
- * Features:
- *   - Sequence + version picker: load any sequence definition as a DAG.
- *   - Instance picker: overlay live execution state (polling GET /instances/{id}/tree).
- *   - Vue Flow canvas: BlockNode custom nodes, auto-layout, zoom/pan, MiniMap, Controls, Background.
- *   - NodeDetailPanel drawer: block config + live state when instance overlaid.
- *   - Edge editing: connect/remove edges, drag nodes; validate acyclicity before save.
- *   - Save: POST /sequences to create a new version. Export JSON download.
- *   - Keyboard: Esc closes drawer, Ctrl+Shift+F fits view.
+ * STRUCTURE-FIRST EDITOR: `canvas.editable.definition.blocks` is the single
+ * source of truth. The canvas NEVER lets you draw arbitrary edges — edges are
+ * always DERIVED from the nested block tree (buildEdges). Every structural
+ * gesture (drag-to-reorder, context menu, detail panel) routes to a store
+ * mutator; `rebuildGraph()` then re-derives nodes + edges from the new tree.
  *
  * DESIGN_REFERENCE §dag-sequences.md, §instances-core.md
  */
@@ -19,8 +16,8 @@ import {
   useVueFlow,
   type Node,
   type Edge,
-  type Connection,
   type NodeMouseEvent,
+  type NodeDragEvent,
   type NodeComponent,
   MarkerType,
 } from '@vue-flow/core'
@@ -33,24 +30,28 @@ import '@vue-flow/core/dist/style.css'
 import '@vue-flow/controls/dist/style.css'
 import '@vue-flow/minimap/dist/style.css'
 
-import {
-  Network,
-  RefreshCw,
-  AlertCircle,
-} from 'lucide-vue-next'
+import { Network, RefreshCw, AlertCircle, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight } from 'lucide-vue-next'
 
 import { useUiStore } from '@/stores/ui'
 import { useCanvasStore } from '@/stores/canvas'
 import { useAsync } from '@/composables/useAsync'
 import { usePolling } from '@/composables/usePolling'
 
-import { saveSequenceVersion, fetchExecutionTree } from '@/api/canvas'
-import { exportSequenceAsJson } from '@/api/canvas'
+import { saveSequenceVersion, fetchExecutionTree, exportSequenceAsJson } from '@/api/canvas'
 import { errorMessage } from '@/api/errors'
 
-import { computeLayout, buildEdges, isAcyclicEdge } from '@/components/canvas/dagLayout'
+import { computeLayout, buildEdges } from '@/components/canvas/dagLayout'
+import {
+  findBlock,
+  findParent,
+  getContainers,
+  listContainers,
+  descendantIds,
+  type MoveTarget,
+  type ContainerRef,
+} from '@/components/canvas/treeOps'
 import type { CanvasNodeData } from '@/api/types/canvas'
-import type { SequenceDefinition } from '@/api/types/sequences'
+import type { SequenceDefinition, BlockDefinition } from '@/api/types/sequences'
 import type { ExecutionNode } from '@/api/types/instances'
 
 import PageHeader from '@/components/ui/PageHeader.vue'
@@ -87,6 +88,7 @@ const loadError = ref<string | null>(null)
 // Detail drawer
 const detailOpen = ref(false)
 const detailNodeData = ref<CanvasNodeData | null>(null)
+const selectedNodeId = ref<string | null>(null)
 
 // Picker state (v-model on pickers)
 const pickerSequenceId = ref<string | null>(null)
@@ -99,9 +101,8 @@ async function loadSequenceById(seq: SequenceDefinition) {
   loadingSequence.value = true
   loadError.value = null
   try {
-    // For the version picker load event, the seq object is already full definition
-    canvas.loadSequence(seq)
-    await rebuildCanvas(seq)
+    canvas.loadSequence(seq) // clones into editable.definition (source of truth)
+    await rebuildGraph({ fit: true })
   } catch (e) {
     loadError.value = errorMessage(e)
   } finally {
@@ -109,29 +110,33 @@ async function loadSequenceById(seq: SequenceDefinition) {
   }
 }
 
-async function rebuildCanvas(seq: SequenceDefinition) {
-  const layout = computeLayout(seq.blocks)
-  const edgeSpecs = buildEdges(seq.blocks)
+/**
+ * Re-derive Vue Flow nodes + edges from the canonical block tree.
+ * Called on load and after EVERY mutation (via the editable watcher).
+ */
+async function rebuildGraph(opts: { fit?: boolean } = {}) {
+  if (!canvas.editable) {
+    nodes.value = []
+    edges.value = []
+    return
+  }
+  const blocks = canvas.blocks
+  const layout = computeLayout(blocks)
+  const edgeSpecs = buildEdges(blocks)
 
-  const newNodes: Node[] = layout.positions.map((pos) => {
-    const block = findBlock(seq.blocks, pos.id)
-    if (!block) throw new Error(`Block not found for id: ${pos.id}`)
-    const nodeState = canvas.nodeStateMap[pos.id]
-    const execNode = canvas.executionNodes.find((n) => n.block_id === pos.id)
+  const newNodes: Node[] = []
+  for (const pos of layout.positions) {
+    const block = findBlock(blocks, pos.id)
+    if (!block) continue
     const data: CanvasNodeData = {
       block,
-      nodeState,
-      execNode,
-      depth: 0, // filled in after layout
+      nodeState: canvas.nodeStateMap[pos.id],
+      execNode: canvas.executionNodes.find((n) => n.block_id === pos.id),
+      depth: 0,
       indexInDepth: 0,
     }
-    return {
-      id: pos.id,
-      type: 'block-node',
-      position: { x: pos.x, y: pos.y },
-      data,
-    }
-  })
+    newNodes.push({ id: pos.id, type: 'block-node', position: { x: pos.x, y: pos.y }, data })
+  }
 
   const newEdges: Edge[] = edgeSpecs.map((spec) => ({
     id: spec.id,
@@ -141,57 +146,41 @@ async function rebuildCanvas(seq: SequenceDefinition) {
     animated: spec.animated ?? false,
     label: spec.label,
     markerEnd: MarkerType.ArrowClosed,
-    style: spec.edgeType === 'back'
-      ? { stroke: 'var(--color-purple)', strokeDasharray: '5 5' }
-      : spec.edgeType === 'branch'
-        ? { stroke: 'var(--color-accent)' }
-        : undefined,
+    style:
+      spec.edgeType === 'back'
+        ? { stroke: 'var(--color-purple)', strokeDasharray: '5 5' }
+        : spec.edgeType === 'branch'
+          ? { stroke: 'var(--color-accent)' }
+          : undefined,
   }))
 
   nodes.value = newNodes
   edges.value = newEdges
 
-  await nextTick()
-  await fitView({ padding: 0.12, duration: 300 })
-}
-
-/** Depth-first search through nested block trees to find a block by id. */
-function findBlock(blocks: SequenceDefinition['blocks'], id: string): SequenceDefinition['blocks'][number] | null {
-  for (const block of blocks) {
-    if (block.id === id) return block
-    const children = getNestedBlocks(block)
-    const found = findBlock(children, id)
-    if (found) return found
-  }
-  return null
-}
-
-function getNestedBlocks(block: SequenceDefinition['blocks'][number]): SequenceDefinition['blocks'] {
-  switch (block.type) {
-    case 'parallel':
-    case 'race':
-      return block.branches.flat()
-    case 'loop':
-    case 'for_each':
-      return block.body
-    case 'router': {
-      const all = block.routes.flatMap((r) => r.blocks)
-      if (block.default) all.push(...block.default)
-      return all
-    }
-    case 'try_catch': {
-      const all = [...block.try_block, ...block.catch_block]
-      if (block.finally_block) all.push(...block.finally_block)
-      return all
-    }
-    case 'ab_split':
-      return block.variants.flatMap((v) => v.blocks)
-    case 'cancellation_scope':
-      return block.blocks
-    default:
-      return []
+  if (opts.fit) {
+    await nextTick()
+    await fitView({ padding: 0.12, duration: 300 })
   }
 }
+
+// ---- Single source of truth: re-derive on every tree mutation ---------------
+
+watch(
+  () => canvas.editable?.definition.blocks,
+  () => {
+    void rebuildGraph({ fit: false })
+    // Keep the open detail drawer in sync with the live tree (or close it if the
+    // block was deleted).
+    if (detailOpen.value && detailNodeData.value) {
+      const fresh = findBlock(canvas.blocks, detailNodeData.value.block.id)
+      if (fresh) detailNodeData.value = { ...detailNodeData.value, block: fresh }
+      else {
+        detailOpen.value = false
+        selectedNodeId.value = null
+      }
+    }
+  },
+)
 
 // ---- Live state overlay (polling) -------------------------------------------
 
@@ -221,15 +210,14 @@ watch(
   },
 )
 
-watch(liveTree.data, (nodes) => {
-  if (!nodes) return
-  canvas.updateLiveNodes(nodes)
+watch(liveTree.data, (tree) => {
+  if (!tree) return
+  canvas.updateLiveNodes(tree)
   updateNodeLiveStates()
 })
 
+/** In-place update of node live state during polling (no relayout). */
 function updateNodeLiveStates() {
-  // Spread over a SHALLOW view of the nodes: inlining the spread of Vue Flow's
-  // deep generic `Node` type trips TS2589 (infinite instantiation depth).
   const current = nodes.value as unknown as Array<Record<string, unknown>>
   const remapped = current.map((n) => {
     const id = n.id as string
@@ -257,57 +245,127 @@ function onNodeClick(event: NodeMouseEvent) {
   const nodeData = event.node.data as CanvasNodeData
   if (!nodeData?.block) return
   detailNodeData.value = nodeData
+  selectedNodeId.value = nodeData.block.id
   detailOpen.value = true
 }
 
-// ---- Edge connect / remove (in-memory editable model) -----------------------
+// ---- Drag-to-reorder (gesture → reorder mutator) ----------------------------
+// The layout places siblings horizontally, so the dropped X position maps to a
+// new sibling index. A drag that doesn't change order snaps back (no mutation).
+//
+// ZOOM/PAN: `node.position` (both `e.node.position` and the entries in
+// `nodes.value`) is in Vue Flow FLOW coordinates — the intrinsic graph space,
+// not screen pixels. Vue Flow already divides the screen drag-delta by the zoom
+// factor when it updates the position, so comparing positions is zoom/pan
+// invariant. Applying a viewport-transform correction here would be a bug.
 
-function onConnect(params: Connection) {
-  if (!params.source || !params.target) return
-
-  // Validate acyclicity
-  const existingEdgePairs = (edges.value as unknown as Array<{ source: string; target: string }>).map(
-    (e) => ({ source: e.source, target: e.target }),
-  )
-  if (!isAcyclicEdge(existingEdgePairs, params.source, params.target)) {
-    ui.error('Cycle detected', 'Adding this edge would create a cycle in the DAG.')
+function onNodeDragStop(e: NodeDragEvent) {
+  const id = e.node.id
+  const parent = findParent(canvas.blocks, id)
+  if (!parent) {
+    void rebuildGraph()
     return
   }
-
-  const newEdge: Edge = {
-    id: `e-user-${params.source}-${params.target}`,
-    source: params.source,
-    target: params.target,
-    markerEnd: MarkerType.ArrowClosed,
+  // Vue Flow `node.position` is in FLOW coordinates (graph space), independent of
+  // the viewport's zoom + pan transform. So comparing the dragged node's x to its
+  // siblings' x is inherently zoom/pan-invariant — no screen↔flow conversion needed.
+  const xById = new Map(
+    (nodes.value as unknown as Array<{ id: string; position: { x: number } }>).map((n) => [n.id, n.position.x]),
+  )
+  const draggedX = e.node.position.x
+  const xOf = (b: BlockDefinition) => (b.id === id ? draggedX : (xById.get(b.id) ?? 0))
+  const order = [...parent.siblings]
+  const desired = [...order].sort((a, b) => xOf(a) - xOf(b))
+  const sameOrder = desired.every((b, i) => b.id === order[i]?.id)
+  if (sameOrder) {
+    void rebuildGraph() // snap back to the deterministic layout
+    return
   }
-  // Cast needed: spread of deep Vue Flow generic Edge[] triggers TS2589
-  edges.value = [...edges.value as unknown as Edge[], newEdge]
-  canvas.markDirty()
+  const newIndex = desired.findIndex((b) => b.id === id)
+  canvas.move(id, { parentId: parent.parentId, key: parent.key, index: newIndex })
 }
 
-function onEdgeRemove(edgesToRemove: Edge[]) {
-  const ids = new Set(edgesToRemove.map((e) => e.id))
-  ;(edges as unknown as { value: Edge[] }).value = (edges.value as unknown as Edge[]).filter((e) => !ids.has(e.id))
-  canvas.markDirty()
+// ---- Context menu (gesture → mutators) --------------------------------------
+
+interface CtxState {
+  open: boolean
+  x: number
+  y: number
+  block: BlockDefinition | null
+}
+const ctx = ref<CtxState>({ open: false, x: 0, y: 0, block: null })
+const ctxContainers = computed(() => (ctx.value.block ? getContainers(ctx.value.block) : []))
+
+function onNodeContextMenu(e: NodeMouseEvent) {
+  const native = e.event as MouseEvent
+  native.preventDefault?.()
+  const block = (e.node.data as CanvasNodeData)?.block
+  if (!block) return
+  ctx.value = { open: true, x: native.clientX, y: native.clientY, block }
+}
+function closeCtx() {
+  ctx.value = { ...ctx.value, open: false }
+}
+function ctxInsertAfter() {
+  if (ctx.value.block) canvas.addStep(ctx.value.block.id)
+  closeCtx()
+}
+function ctxReorder(dir: 'up' | 'down') {
+  if (ctx.value.block) canvas.reorder(ctx.value.block.id, dir)
+  closeCtx()
+}
+function ctxDelete() {
+  if (ctx.value.block) {
+    canvas.removeBlock(ctx.value.block.id)
+    if (selectedNodeId.value === ctx.value.block.id) detailOpen.value = false
+  }
+  closeCtx()
+}
+function ctxAddInto(key: string) {
+  if (ctx.value.block) canvas.addStepInto(ctx.value.block.id, key)
+  closeCtx()
 }
 
-function onNodeDragStop() {
-  // Dragging repositions nodes; mark dirty for save
-  canvas.markDirty()
+// ---- Detail-panel events → mutators -----------------------------------------
+
+function panelUpdateConfig(patch: Record<string, unknown>) {
+  if (selectedNodeId.value) canvas.updateConfig(selectedNodeId.value, patch)
+}
+function panelDelete() {
+  if (selectedNodeId.value) canvas.removeBlock(selectedNodeId.value)
+  detailOpen.value = false
+}
+function panelReorder(dir: 'up' | 'down') {
+  if (selectedNodeId.value) canvas.reorder(selectedNodeId.value, dir)
+}
+function panelInsertAfter() {
+  if (selectedNodeId.value) canvas.addStep(selectedNodeId.value)
+}
+function panelMove(target: MoveTarget) {
+  if (selectedNodeId.value) canvas.move(selectedNodeId.value, target)
+}
+function panelAddInto(key: string) {
+  if (selectedNodeId.value) canvas.addStepInto(selectedNodeId.value, key)
 }
 
-// ---- Auto-layout ------------------------------------------------------------
+const detailError = computed(() =>
+  detailNodeData.value ? canvas.blockErrors[detailNodeData.value.block.id] : undefined,
+)
+const moveTargets = computed<ContainerRef[]>(() => {
+  const b = detailNodeData.value?.block
+  if (!b) return []
+  const banned = new Set<string>([b.id, ...descendantIds(b)])
+  return listContainers(canvas.blocks).filter((c) => c.parentId === null || !banned.has(c.parentId))
+})
+
+// ---- Toolbar actions --------------------------------------------------------
+
+function addStepFromToolbar() {
+  canvas.addStep(selectedNodeId.value)
+}
 
 async function runAutoLayout() {
-  const seq = canvas.loadedSequence
-  if (!seq) return
-  const layout = computeLayout(seq.blocks)
-  nodes.value = (nodes.value as unknown as Node[]).map((n) => {
-    const pos = layout.positions.find((p) => p.id === n.id)
-    return pos ? { ...n, position: { x: pos.x, y: pos.y } } : n
-  }) as unknown as Node[]
-  await nextTick()
-  await fitView({ padding: 0.12, duration: 300 })
+  await rebuildGraph({ fit: true })
 }
 
 // ---- Save (POST /sequences new version) -------------------------------------
@@ -316,9 +374,14 @@ async function handleSave() {
   const ed = canvas.editable
   if (!ed || !ed.dirty) return
 
+  if (!canvas.isValid) {
+    ui.error('Cannot save', 'Resolve the highlighted validation errors before saving.')
+    return
+  }
+
   const ok = await ui.confirm({
     title: 'Save as new version?',
-    message: 'This will create a new sequence version with your edits. The current version is preserved.',
+    message: 'This creates a new sequence version from your edits. The current version is preserved.',
     confirmText: 'Save new version',
     tone: 'default',
   })
@@ -327,13 +390,8 @@ async function handleSave() {
   saving.value = true
   try {
     const def = ed.definition
-    // Build create request: bump version, new id (server assigns)
     const now = new Date().toISOString()
-    const body = {
-      ...def,
-      version: def.version + 1,
-      created_at: now,
-    }
+    const body = { ...def, version: def.version + 1, created_at: now }
     const res = await saveSequenceVersion(body)
     if (res.warnings && res.warnings.length > 0) {
       ui.warning('Saved with warnings', res.warnings.join('; '))
@@ -348,20 +406,26 @@ async function handleSave() {
   }
 }
 
-// ---- Export JSON ------------------------------------------------------------
+// ---- Export JSON (operates on the LIVE editable definition) -----------------
 
 function handleExport() {
-  const seq = canvas.loadedSequence
-  if (!seq) return
-  exportSequenceAsJson(seq)
+  const def = canvas.editable?.definition ?? canvas.loadedSequence
+  if (!def) return
+  exportSequenceAsJson(def)
 }
 
-// ---- Keyboard: Ctrl+Shift+F → fit view; Esc → close drawer ------------------
+// ---- Keyboard: Ctrl+Shift+F → fit view; Esc → close drawer/menu -------------
 
 function onKeyDown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && detailOpen.value) {
-    detailOpen.value = false
-    return
+  if (e.key === 'Escape') {
+    if (ctx.value.open) {
+      closeCtx()
+      return
+    }
+    if (detailOpen.value) {
+      detailOpen.value = false
+      return
+    }
   }
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'F') {
     e.preventDefault()
@@ -381,7 +445,8 @@ onUnmounted(() => {
 // ---- Computed helpers -------------------------------------------------------
 
 const sequenceLoaded = computed(() => canvas.loadedSequence !== null)
-const dirty = computed(() => canvas.editable?.dirty ?? false)
+const dirty = computed(() => canvas.isDirty)
+const errorCount = computed(() => Object.keys(canvas.blockErrors).length + canvas.validationErrors.length)
 </script>
 
 <template>
@@ -389,18 +454,15 @@ const dirty = computed(() => canvas.editable?.dirty ?? false)
     <!-- Page header -->
     <PageHeader
       title="Flow Canvas"
-      description="Interactive DAG editor — load a sequence, visualise its block graph, and overlay live execution state."
+      description="Structure-first DAG editor — the block tree is the source of truth; edges are derived. Drag to reorder, right-click for actions, click a node to edit."
       :icon="Network"
     >
       <template #actions>
-        <!-- Sequence picker (in header actions for desktop density) -->
         <SequencePicker
           v-model="pickerSequenceId"
           v-model:version-value="pickerVersionId"
           @load="loadSequenceById"
         />
-
-        <!-- Instance overlay picker (only when a sequence is loaded) -->
         <InstancePicker
           v-if="sequenceLoaded"
           :sequence-id="pickerSequenceId"
@@ -420,13 +482,28 @@ const dirty = computed(() => canvas.editable?.dirty ?? false)
       <button class="ml-auto underline" @click="loadError = null">Dismiss</button>
     </div>
 
-    <!-- Canvas toolbar (above the flow canvas) -->
+    <!-- Validation banner -->
+    <div
+      v-if="sequenceLoaded && errorCount > 0"
+      class="mb-3 flex items-center gap-2 rounded-lg border border-warning/30 bg-warning-soft px-4 py-2.5 text-[12.5px] text-warning"
+      role="alert"
+    >
+      <AlertCircle :size="14" class="shrink-0" />
+      <span>
+        {{ errorCount }} validation {{ errorCount === 1 ? 'issue' : 'issues' }} —
+        {{ canvas.validationErrors.join('; ') || 'see highlighted blocks' }}. Saving is blocked until resolved.
+      </span>
+    </div>
+
+    <!-- Canvas toolbar -->
     <CanvasToolbar
       v-if="sequenceLoaded"
       :dirty="dirty"
       :saving="saving"
       :minimap-visible="minimapVisible"
       :sequence-loaded="sequenceLoaded"
+      :valid="canvas.isValid"
+      @add-step="addStepFromToolbar"
       @fit-view="fitView({ padding: 0.12, duration: 300 })"
       @auto-layout="runAutoLayout"
       @toggle-minimap="minimapVisible = !minimapVisible"
@@ -436,7 +513,6 @@ const dirty = computed(() => canvas.editable?.dirty ?? false)
 
     <!-- Main canvas area -->
     <div class="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-bg">
-      <!-- Loading skeleton -->
       <div v-if="loadingSequence" class="flex h-full items-center justify-center">
         <div class="flex flex-col items-center gap-3">
           <RefreshCw :size="28" class="animate-spin text-accent" />
@@ -444,41 +520,32 @@ const dirty = computed(() => canvas.editable?.dirty ?? false)
         </div>
       </div>
 
-      <!-- Empty state — no sequence loaded -->
       <div v-else-if="!sequenceLoaded" class="flex h-full items-center justify-center">
         <EmptyState
           :icon="Network"
           title="No sequence loaded"
-          description="Select a sequence from the picker above to visualise its block DAG. You can then overlay live instance execution state in real time."
+          description="Select a sequence from the picker above to visualise its block DAG, edit its structure, and overlay live instance execution state."
         />
       </div>
 
-      <!-- Vue Flow canvas -->
       <VueFlow
         v-else
         v-model:nodes="nodes"
         v-model:edges="edges"
         :node-types="nodeTypes"
-        :default-edge-options="{
-          markerEnd: MarkerType.ArrowClosed,
-          type: 'smoothstep',
-        }"
+        :nodes-connectable="false"
+        :edges-updatable="false"
         :connect-on-click="false"
         fit-view-on-init
         class="h-full w-full"
         :style="{ background: 'transparent' }"
         @node-click="onNodeClick"
-        @connect="onConnect"
-        @edges-delete="onEdgeRemove"
         @node-drag-stop="onNodeDragStop"
+        @node-context-menu="onNodeContextMenu"
+        @pane-click="closeCtx"
       >
         <Background pattern-color="var(--color-border)" :gap="24" :size="1" />
-
-        <Controls
-          :show-interactive="false"
-          class="!bg-surface !border-border"
-        />
-
+        <Controls :show-interactive="false" class="!bg-surface !border-border" />
         <MiniMap
           v-if="minimapVisible"
           :node-color="(n) => {
@@ -497,10 +564,104 @@ const dirty = computed(() => canvas.editable?.dirty ?? false)
       </VueFlow>
     </div>
 
-    <!-- Node detail drawer -->
+    <!-- Context menu (teleported, fixed at cursor) -->
+    <Teleport to="body">
+      <template v-if="ctx.open">
+        <div class="fixed inset-0 z-[120]" @click="closeCtx" @contextmenu.prevent="closeCtx" />
+        <div
+          class="anim-pop fixed z-[121] min-w-[200px] overflow-hidden rounded-lg border border-border-strong bg-elevated py-1 shadow-pop"
+          :style="{ left: ctx.x + 'px', top: ctx.y + 'px' }"
+          role="menu"
+        >
+          <p class="mono truncate px-3 py-1 text-[10.5px] uppercase tracking-wide text-faint">{{ ctx.block?.id }}</p>
+          <button class="ctx-item" role="menuitem" @click="ctxInsertAfter">
+            <Plus :size="14" /> Insert step after
+          </button>
+          <button class="ctx-item" role="menuitem" @click="ctxReorder('up')">
+            <ArrowUp :size="14" /> Move up
+          </button>
+          <button class="ctx-item" role="menuitem" @click="ctxReorder('down')">
+            <ArrowDown :size="14" /> Move down
+          </button>
+          <template v-if="ctxContainers.length">
+            <div class="my-1 h-px bg-border" />
+            <button
+              v-for="c in ctxContainers"
+              :key="c.key"
+              class="ctx-item"
+              role="menuitem"
+              @click="ctxAddInto(c.key)"
+            >
+              <CornerDownRight :size="14" /> Add step → {{ c.label }}
+            </button>
+          </template>
+          <div class="my-1 h-px bg-border" />
+          <button class="ctx-item ctx-danger" role="menuitem" @click="ctxDelete">
+            <Trash2 :size="14" /> Delete block
+          </button>
+        </div>
+      </template>
+    </Teleport>
+
+    <!-- Node detail / editor drawer -->
     <NodeDetailPanel
       v-model:open="detailOpen"
       :node-data="detailNodeData"
+      :error="detailError"
+      :move-targets="moveTargets"
+      @update-config="panelUpdateConfig"
+      @delete="panelDelete"
+      @reorder="panelReorder"
+      @insert-after="panelInsertAfter"
+      @move="panelMove"
+      @add-into="panelAddInto"
     />
   </div>
 </template>
+
+<style scoped>
+.ctx-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 12.5px;
+  color: var(--text);
+  transition: background-color 0.12s;
+}
+.ctx-item:hover {
+  background: var(--hover);
+}
+.ctx-danger {
+  color: var(--danger);
+}
+
+/* Smooth re-layout: after a mutation, rebuildGraph() re-derives node positions;
+   animate the move so the graph doesn't harshly snap/flash. Never transition a
+   node that's actively being dragged (that would lag behind the cursor). */
+:deep(.vue-flow__node) {
+  transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+:deep(.vue-flow__node.dragging) {
+  transition: none;
+}
+</style>
+
+<style>
+/* Smooth re-layout: animate node POSITION changes after a mutation so the
+   re-derived graph glides into place instead of snapping/flashing. Disabled
+   mid-drag (Vue Flow adds `.dragging`) so the dragged node tracks the cursor
+   1:1. Viewport pan/zoom is untouched — that transforms the pane, not nodes. */
+.vue-flow__node {
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.vue-flow__node.dragging {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .vue-flow__node {
+    transition: none;
+  }
+}
+</style>

@@ -60,9 +60,12 @@ async function submit() {
 
       <form class="rounded-xl border border-border bg-surface p-6 shadow-2" @submit.prevent="submit">
         <div class="flex flex-col gap-4">
-          <Field label="Server URL" hint="Leave blank to use the same origin (dev proxy).">
+          <Field
+            label="Server URL"
+            hint="Leave blank when the console is served behind a proxy that forwards /api to orch8-server (recommended — same-origin, no CORS). Only set an absolute URL if that server's ORCH8_CORS_ORIGINS allows this origin."
+          >
             <template #default="{ id }">
-              <Input :id="id" v-model="form.baseUrl" placeholder="https://orch8.internal:8080" mono />
+              <Input :id="id" v-model="form.baseUrl" placeholder="(blank = same origin)" mono />
             </template>
           </Field>
 

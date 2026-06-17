@@ -215,4 +215,85 @@ describe('useCanvasStore', () => {
       expect(store.selectedInstanceId).toBeNull()
     })
   })
+
+  describe('structure mutators (single source of truth)', () => {
+    const realStep = (id: string, handler = 'log'): BlockDefinition =>
+      ({ type: 'step', id, handler, params: {}, cancellable: false }) as BlockDefinition
+
+    function loadWith(...ids: string[]) {
+      const store = useCanvasStore()
+      const seq = makeSeq('s1')
+      seq.blocks = ids.map((i) => realStep(i))
+      store.loadSequence(seq)
+      return store
+    }
+
+    it('addStep appends a valid step and marks dirty', () => {
+      const store = loadWith('a')
+      expect(store.isDirty).toBe(false)
+      store.addStep('a')
+      expect(store.blocks).toHaveLength(2)
+      expect(store.isDirty).toBe(true)
+      expect(store.isValid).toBe(true)
+      expect((store.blocks[1] as { handler: string }).handler).toBe('log')
+    })
+
+    it('removeBlock deletes by id', () => {
+      const store = loadWith('a', 'b')
+      store.removeBlock('a')
+      expect(store.blocks.map((b) => b.id)).toEqual(['b'])
+      expect(store.isDirty).toBe(true)
+    })
+
+    it('reorder swaps siblings', () => {
+      const store = loadWith('a', 'b')
+      store.reorder('b', 'up')
+      expect(store.blocks.map((b) => b.id)).toEqual(['b', 'a'])
+    })
+
+    it('updateConfig merges a patch and re-validates', () => {
+      const store = loadWith('a')
+      store.updateConfig('a', { handler: 'http' })
+      expect((store.blocks[0] as { handler: string }).handler).toBe('http')
+      expect(store.isDirty).toBe(true)
+      expect(store.isValid).toBe(true)
+    })
+
+    it('move relocates a block into a container', () => {
+      const store = useCanvasStore()
+      const seq = makeSeq('s1')
+      seq.blocks = [
+        realStep('a'),
+        { type: 'parallel', id: 'p', branches: [[realStep('x')]] } as BlockDefinition,
+      ]
+      store.loadSequence(seq)
+      store.move('a', { parentId: 'p', key: 'branch:0', index: 0 })
+      expect(store.blocks.map((b) => b.id)).toEqual(['p'])
+    })
+
+    it('addStepInto seeds a specific container', () => {
+      const store = useCanvasStore()
+      const seq = makeSeq('s1')
+      seq.blocks = [{ type: 'cancellation_scope', id: 'cs', blocks: [] } as BlockDefinition]
+      store.loadSequence(seq)
+      store.addStepInto('cs', 'scope')
+      expect(store.isDirty).toBe(true)
+      expect(store.isValid).toBe(true)
+    })
+
+    it('surfaces validation errors via blockErrors and isValid', () => {
+      const store = useCanvasStore()
+      const seq = makeSeq('s1')
+      seq.blocks = [{ type: 'step', id: 'bad', handler: '', cancellable: false } as BlockDefinition]
+      store.loadSequence(seq)
+      expect(store.isValid).toBe(false)
+      expect(store.blockErrors['bad']).toMatch(/handler/)
+    })
+
+    it('mutators are no-ops without a loaded sequence', () => {
+      const store = useCanvasStore()
+      expect(() => store.addStep(null)).not.toThrow()
+      expect(store.blocks).toEqual([])
+    })
+  })
 })
