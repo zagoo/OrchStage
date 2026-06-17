@@ -1,0 +1,42 @@
+{
+  "name": "orch8-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Orch8 operator console — desktop-grade Vue 3 UI covering 100% of the Orch8 HTTP OpenAPI surface.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@vue-flow/background": "^1.3.2",
+    "@vue-flow/controls": "^1.1.2",
+    "@vue-flow/core": "^1.42.1",
+    "@vue-flow/minimap": "^1.5.3",
+    "clsx": "^2.1.1",
+    "lucide-vue-next": "^0.460.0",
+    "pinia": "^2.3.1",
+    "tailwind-merge": "^2.6.0",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.6",
+    "@types/node": "^22.13.1",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "@vitest/coverage-v8": "^2.1.9",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^25.0.1",
+    "tailwindcss": "^4.0.6",
+    "typescript": "~5.7.3",
+    "vite": "^6.1.0",
+    "vitest": "^2.1.9",
+    "vue-tsc": "^2.2.0"
+  }
+}

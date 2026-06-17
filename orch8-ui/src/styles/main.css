@@ -1,0 +1,243 @@
+@import 'tailwindcss';
+
+/* ------------------------------------------------------------------ *
+ * Orch8 Console — design tokens
+ * Dark-first operator console aesthetic (IDE / pro-SaaS texture).
+ * Tailwind v4 theme maps utility colors -> runtime CSS variables so
+ * `bg-surface`, `text-muted`, `border-border` etc. switch with the theme.
+ * ------------------------------------------------------------------ */
+@theme {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-elevated: var(--elevated);
+  --color-hover: var(--hover);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-text: var(--text);
+  --color-muted: var(--text-muted);
+  --color-subtle: var(--text-subtle);
+  --color-faint: var(--text-faint);
+
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-purple: var(--purple);
+  --color-cyan: var(--cyan);
+  --color-pink: var(--pink);
+  --color-teal: var(--teal);
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+}
+
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0a0b0f;
+  --surface: #111317;
+  --surface-2: #161922;
+  --elevated: #1c2029;
+  --hover: #1a1e27;
+  --overlay: rgba(4, 5, 8, 0.66);
+  --border: #232834;
+  --border-strong: #333a4a;
+
+  --text: #e7eaf1;
+  --text-muted: #a6adbd;
+  --text-subtle: #737b8e;
+  --text-faint: #4c5466;
+
+  --accent: #6366f1;
+  --accent-strong: #818cf8;
+  --accent-soft: rgba(99, 102, 241, 0.15);
+
+  --success: #2bd07a;
+  --success-soft: rgba(43, 208, 122, 0.14);
+  --warning: #f6b73c;
+  --warning-soft: rgba(246, 183, 60, 0.14);
+  --danger: #f4555a;
+  --danger-soft: rgba(244, 85, 90, 0.14);
+  --info: #43b6f7;
+  --info-soft: rgba(67, 182, 247, 0.14);
+  --purple: #b07cf6;
+  --cyan: #34d3ee;
+  --pink: #ef6aa6;
+  --teal: #2dd4bf;
+
+  --ring: rgba(129, 140, 248, 0.55);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 6px 22px -6px rgba(0, 0, 0, 0.55);
+  --shadow-3: 0 18px 50px -12px rgba(0, 0, 0, 0.7);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f5f6f9;
+  --surface: #ffffff;
+  --surface-2: #f7f8fb;
+  --elevated: #ffffff;
+  --hover: #eef0f5;
+  --overlay: rgba(20, 22, 30, 0.34);
+  --border: #e3e6ed;
+  --border-strong: #cfd4df;
+
+  --text: #1a1d26;
+  --text-muted: #545b6b;
+  --text-subtle: #79808f;
+  --text-faint: #a2a8b6;
+
+  --accent: #5b5ef0;
+  --accent-strong: #4f46e5;
+  --accent-soft: rgba(91, 94, 240, 0.1);
+
+  --success: #15a55a;
+  --success-soft: rgba(21, 165, 90, 0.12);
+  --warning: #c9821a;
+  --warning-soft: rgba(201, 130, 26, 0.12);
+  --danger: #d83a3f;
+  --danger-soft: rgba(216, 58, 63, 0.1);
+  --info: #1b8fd1;
+  --info-soft: rgba(27, 143, 209, 0.1);
+  --purple: #9333ea;
+  --cyan: #0891b2;
+  --pink: #db2777;
+  --teal: #0d9488;
+
+  --ring: rgba(91, 94, 240, 0.5);
+  --shadow-1: 0 1px 2px rgba(20, 22, 30, 0.08);
+  --shadow-2: 0 8px 24px -8px rgba(20, 22, 30, 0.16);
+  --shadow-3: 0 20px 48px -16px rgba(20, 22, 30, 0.24);
+}
+
+* {
+  border-color: var(--border);
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+}
+
+#app {
+  isolation: isolate;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+/* Desktop-grade thin scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+@layer utilities {
+  .surface-grid {
+    background-image:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 22px 22px;
+    background-position: -1px -1px;
+  }
+  .mono {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+  .shadow-pop {
+    box-shadow: var(--shadow-3);
+  }
+}
+
+/* Motion primitives */
+@keyframes o8-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes o8-scale-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes o8-slide-in-right {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes o8-shimmer {
+  0% { background-position: -468px 0; }
+  100% { background-position: 468px 0; }
+}
+@keyframes o8-pulse-ring {
+  0% { box-shadow: 0 0 0 0 var(--accent-soft); }
+  70% { box-shadow: 0 0 0 6px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+.anim-fade { animation: o8-fade-in 0.18s ease-out; }
+.anim-pop { animation: o8-scale-in 0.16s cubic-bezier(0.16, 1, 0.3, 1); }
+.anim-slide { animation: o8-slide-in-right 0.22s cubic-bezier(0.16, 1, 0.3, 1); }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
