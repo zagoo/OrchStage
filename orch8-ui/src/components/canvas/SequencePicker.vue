@@ -13,9 +13,11 @@ import { listSequences, listSequenceVersions } from '@/api/sequences'
 import type { SequenceDefinition } from '@/api/types/sequences'
 import Select from '@/components/ui/Select.vue'
 
-defineProps<{
+const props = defineProps<{
   modelValue: string | null // selected sequence id
   versionValue: string | null // selected version sequence id
+  /** Sequence id to auto-select once the list loads (e.g. ?sequence= deep-link). */
+  initialSequenceId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -55,8 +57,15 @@ const versionOptions = computed(() =>
   }))
 )
 
-onMounted(() => {
-  void seqList.run()
+onMounted(async () => {
+  await seqList.run()
+  // Deep-link support: "Open in Canvas" navigates to /canvas?sequence=<id>. Once
+  // the list is loaded, auto-select that sequence via the same path a manual pick
+  // takes (emits update:modelValue + load), so the canvas renders it immediately.
+  const initial = props.initialSequenceId
+  if (initial && (seqList.data.value?.items ?? []).some((s) => s.id === initial)) {
+    await onSequenceChange(initial)
+  }
 })
 
 async function onSequenceChange(id: string) {

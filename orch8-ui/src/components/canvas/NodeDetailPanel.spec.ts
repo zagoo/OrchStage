@@ -1,14 +1,20 @@
 /**
  * Component test for NodeDetailPanel — verifies the editor emits the correct
  * structural/config mutations (which the view routes to the store, flipping
- * `dirty`). Drawer/Tabs are stubbed to expose their slots; the form widgets
- * (Input/Button/etc.) render for real so the v-model → emit path is exercised.
+ * `dirty`). The form widgets (Input/Button/etc.) render for real so the
+ * v-model → emit path is exercised.
+ *
+ * The `Tabs` stub renders NO slots — exactly like the real `Tabs.vue`, which is a
+ * tab BAR only. The panel's content therefore must live OUTSIDE `<Tabs>` (as
+ * v-show siblings) for these tests to find any inputs. A regression that puts the
+ * editor back inside Tabs panel-slots (which never render) makes the whole config
+ * panel blank — and now fails this suite instead of silently shipping read-only.
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import NodeDetailPanel from './NodeDetailPanel.vue'
 import type { CanvasNodeData } from '@/api/types/canvas'
-import type { StepBlock } from '@/api/types/sequences'
+import type { StepBlock, RouterBlock } from '@/api/types/sequences'
 
 const stepNode = (): CanvasNodeData => ({
   block: { type: 'step', id: 's1', handler: 'log', params: { a: 1 }, cancellable: false } as StepBlock,
@@ -16,13 +22,24 @@ const stepNode = (): CanvasNodeData => ({
   indexInDepth: 0,
 })
 
+const routerNode = (): CanvasNodeData => ({
+  block: {
+    type: 'router',
+    id: 'r1',
+    routes: [{ condition: 'a == 1', blocks: [] }],
+    default: [{ type: 'step', id: 'd1', handler: 'log', params: {}, cancellable: false }],
+  } as RouterBlock,
+  depth: 0,
+  indexInDepth: 0,
+})
+
 const stubs = {
   Drawer: { props: ['open', 'title', 'icon', 'width'], template: '<div class="drawer"><slot /></div>' },
-  Tabs: { props: ['tabs', 'modelValue'], template: '<div class="tabs"><slot name="config" /><slot name="live" /></div>' },
+  Tabs: { props: ['tabs', 'modelValue'], template: '<div class="tabs"></div>' },
 }
 
-function mountPanel() {
-  return mount(NodeDetailPanel, { props: { open: true, nodeData: stepNode() }, global: { stubs } })
+function mountPanel(nodeData: CanvasNodeData = stepNode()) {
+  return mount(NodeDetailPanel, { props: { open: true, nodeData }, global: { stubs } })
 }
 
 function buttonByText(wrapper: ReturnType<typeof mountPanel>, text: string) {
@@ -74,5 +91,32 @@ describe('NodeDetailPanel', () => {
     await buttonByText(wrapper, 'Apply changes')!.trigger('click')
     expect(wrapper.emitted('update-config')).toBeFalsy()
     expect(wrapper.text()).toContain('Invalid JSON')
+  })
+
+  // Router was previously non-editable (read-only) — its route conditions can
+  // only be edited here, so this guards both the "blocks are read-only" fix and
+  // the router edge-edit path that reuses this panel.
+  it('emits update-config with edited router route conditions', async () => {
+    const wrapper = mountPanel(routerNode())
+    const cond = wrapper.find('input[placeholder="opened == true"]')
+    expect(cond.exists()).toBe(true)
+    await cond.setValue('opened == false')
+    await buttonByText(wrapper, 'Apply changes')!.trigger('click')
+
+    const events = wrapper.emitted('update-config')
+    expect(events).toBeTruthy()
+    const patch = events![0]![0] as Record<string, unknown>
+    // Condition updated; the route's (empty) child blocks preserved; default omitted
+    // from the patch so the shallow-merge keeps it.
+    expect(patch.routes).toEqual([{ condition: 'opened == false', blocks: [] }])
+    expect(patch.default).toBeUndefined()
+  })
+
+  it('adds and removes router routes before applying', async () => {
+    const wrapper = mountPanel(routerNode())
+    await buttonByText(wrapper, 'Add route')!.trigger('click')
+    await buttonByText(wrapper, 'Apply changes')!.trigger('click')
+    const patch = wrapper.emitted('update-config')![0]![0] as Record<string, unknown>
+    expect((patch.routes as unknown[]).length).toBe(2)
   })
 })

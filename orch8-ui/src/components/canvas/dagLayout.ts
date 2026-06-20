@@ -186,6 +186,12 @@ export interface EdgeSpec {
   edgeType: 'sequential' | 'branch' | 'back'
   label?: string
   animated?: boolean
+  /**
+   * When set, the edge represents editable config on `ownerId`. Clicking it opens
+   * that block's detail editor (currently router route conditions). `routeIndex`
+   * identifies which route to highlight; absent for the router's default branch.
+   */
+  editable?: { ownerId: string; routeIndex?: number }
 }
 
 let edgeSeq = 0
@@ -256,7 +262,7 @@ function collectChildEdges(block: BlockDefinition): EdgeSpec[] {
     }
 
     case 'router': {
-      block.routes.forEach((route, _idx) => {
+      block.routes.forEach((route, idx) => {
         if (route.blocks.length > 0) {
           edges.push({
             id: makeEdgeId(),
@@ -264,6 +270,7 @@ function collectChildEdges(block: BlockDefinition): EdgeSpec[] {
             target: route.blocks[0].id,
             edgeType: 'branch',
             label: `if: ${route.condition.slice(0, 20)}`,
+            editable: { ownerId: block.id, routeIndex: idx },
           })
           edges.push(...collectEdges(route.blocks))
         }
@@ -275,6 +282,7 @@ function collectChildEdges(block: BlockDefinition): EdgeSpec[] {
           target: block.default[0].id,
           edgeType: 'branch',
           label: 'default',
+          editable: { ownerId: block.id },
         })
         edges.push(...collectEdges(block.default))
       }

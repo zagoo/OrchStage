@@ -30,6 +30,8 @@ const props = defineProps<{
   nodeData: CanvasNodeData | null
   error?: string
   moveTargets?: ContainerRef[]
+  /** Route index to highlight when the panel was opened by clicking a router edge. */
+  focusRouteIndex?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -49,7 +51,14 @@ const execNode = computed(() => props.nodeData?.execNode ?? null)
 const nodeState = computed(() => props.nodeData?.nodeState ?? null)
 const ownContainers = computed(() => (block.value ? getContainers(block.value) : []))
 /** Scalar fields are only editable for these block types; others edit structure on canvas. */
-const editableTypes = new Set<BlockDefinition['type']>(['step', 'sub_sequence', 'loop', 'for_each', 'race'])
+const editableTypes = new Set<BlockDefinition['type']>([
+  'step',
+  'sub_sequence',
+  'loop',
+  'for_each',
+  'race',
+  'router',
+])
 const isEditable = computed(() => (block.value ? editableTypes.has(block.value.type) : false))
 
 const visual = computed(() => {
@@ -81,10 +90,15 @@ const form = ref<Record<string, string>>({})
 const cancellable = ref(false)
 const jsonError = ref<string | null>(null)
 const moveSel = ref('')
+/** Router routes — edited as a list (condition is scalar config; blocks stay structural). */
+const routeForm = ref<{ condition: string; blocks: BlockDefinition[] }[]>([])
+const hasDefault = ref(false)
 
 function populate(b: BlockDefinition | null) {
   jsonError.value = null
   moveSel.value = ''
+  routeForm.value = []
+  hasDefault.value = false
   if (!b) {
     form.value = {}
     return
@@ -115,6 +129,11 @@ function populate(b: BlockDefinition | null) {
       break
     case 'race':
       form.value = { semantics: b.semantics }
+      break
+    case 'router':
+      routeForm.value = b.routes.map((r) => ({ condition: r.condition, blocks: r.blocks }))
+      hasDefault.value = !!b.default
+      form.value = {}
       break
     default:
       form.value = {}
@@ -162,12 +181,25 @@ function applyConfig() {
       case 'race':
         patch.semantics = f.semantics
         break
+      case 'router':
+        // Conditions are scalar config edited here; each route's child blocks are
+        // preserved as-is (edited structurally on the canvas). `default` is left
+        // untouched by omitting it from the patch (shallow-merge keeps it).
+        patch.routes = routeForm.value.map((r) => ({ condition: r.condition.trim(), blocks: r.blocks }))
+        break
     }
   } catch {
     jsonError.value = 'Invalid JSON — fix the highlighted field before applying.'
     return
   }
   emit('update-config', patch)
+}
+
+function addRoute() {
+  routeForm.value.push({ condition: '', blocks: [] })
+}
+function removeRoute(i: number) {
+  routeForm.value.splice(i, 1)
 }
 
 function onMoveSelect(value: string) {
@@ -188,7 +220,6 @@ const tabs = [
     :open="open"
     @update:open="emit('update:open', $event)"
     :title="block?.id ?? 'Block detail'"
-    :icon="Info"
     width="440px"
   >
     <template v-if="block && visual">
@@ -215,8 +246,11 @@ const tabs = [
         <span>{{ error }}</span>
       </div>
 
-      <Tabs :tabs="tabs" v-model="activeTab">
-        <template #config>
+      <!-- Tabs is a tab BAR only (no panel slots — matches every other view);
+           panel content lives in v-show siblings below. -->
+      <Tabs :tabs="tabs" v-model="activeTab" class="mb-4" />
+
+      <div v-show="activeTab === 'config'">
           <KeyValue label="Block ID" :value="block.id" mono class="mb-3" />
 
           <!-- Editable scalar fields -->
@@ -274,6 +308,44 @@ const tabs = [
               </Field>
             </template>
 
+            <template v-else-if="block.type === 'router'">
+              <p class="mb-2.5 text-[12px] text-muted">
+                Routes are evaluated top-down — the first matching condition wins. Each route's steps are edited on the
+                canvas.
+              </p>
+              <div
+                v-for="(r, i) in routeForm"
+                :key="i"
+                class="mb-2.5 rounded-md border px-3 py-2.5 transition-colors"
+                :class="i === focusRouteIndex ? 'border-accent bg-accent-soft' : 'border-border bg-surface-2'"
+              >
+                <div class="mb-1.5 flex items-center justify-between">
+                  <span class="text-[11px] font-medium uppercase tracking-wider text-muted">Route {{ i + 1 }}</span>
+                  <button
+                    class="rounded p-0.5 text-faint transition-colors hover:text-danger disabled:cursor-not-allowed disabled:opacity-40"
+                    :disabled="routeForm.length <= 1"
+                    title="Remove route"
+                    @click="removeRoute(i)"
+                  >
+                    <Trash2 :size="13" />
+                  </button>
+                </div>
+                <Field label="Condition" required>
+                  <Input v-model="r.condition" placeholder="opened == true" class="mono text-[12px]" />
+                </Field>
+              </div>
+              <Button variant="secondary" size="sm" class="mb-3" @click="addRoute">
+                <template #icon><Plus :size="13" /></template>Add route
+              </Button>
+              <p
+                v-if="hasDefault"
+                class="mb-3 rounded-md border border-border bg-surface-2 px-3 py-2 text-[11.5px] text-muted"
+              >
+                A <span class="font-medium text-text">default</span> branch handles the no-match case — edit its steps on
+                the canvas.
+              </p>
+            </template>
+
             <Button variant="primary" size="sm" class="mb-4 w-full" @click="applyConfig">
               <template #icon><Pencil :size="13" /></template>
               Apply changes
@@ -329,11 +401,11 @@ const tabs = [
           <!-- Full JSON -->
           <div class="mt-4">
             <p class="mb-1 text-[11px] font-medium uppercase tracking-wider text-muted">Full Definition</p>
-            <CodeBlock :code="prettyJson(block)" language="json" />
+            <CodeBlock :content="block" language="json" />
           </div>
-        </template>
+      </div>
 
-        <template #live>
+      <div v-show="activeTab === 'live'" class="mt-2">
           <div v-if="nodeState && execNode">
             <div class="mb-3 flex items-center gap-2">
               <Badge :tone="stateTone">{{ titleCase(nodeState) }}</Badge>
@@ -351,8 +423,7 @@ const tabs = [
           <div v-else class="py-8 text-center text-[13px] text-muted">
             No live state — select an instance to overlay execution state.
           </div>
-        </template>
-      </Tabs>
+      </div>
     </template>
 
     <div v-else class="py-8 text-center text-[13px] text-muted">

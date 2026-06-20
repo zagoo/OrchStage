@@ -215,6 +215,15 @@ describe('buildEdges — router conditional fan-out', () => {
     expect(defaultEdge).toBeDefined()
     expect(defaultEdge?.target).toBe('path_default')
   })
+
+  it('tags route + default edges with editable owner metadata (edge-click → editor)', () => {
+    const routeEdges = edges.filter((e) => e.source === 'router1' && e.label?.startsWith('if:'))
+    expect(routeEdges).toHaveLength(2)
+    expect(routeEdges[0].editable).toEqual({ ownerId: 'router1', routeIndex: 0 })
+    expect(routeEdges[1].editable).toEqual({ ownerId: 'router1', routeIndex: 1 })
+    const defaultEdge = edges.find((e) => e.source === 'router1' && e.label === 'default')
+    expect(defaultEdge?.editable).toEqual({ ownerId: 'router1' })
+  })
 })
 
 describe('buildEdges — try_catch arms', () => {

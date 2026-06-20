@@ -11,12 +11,14 @@
  * DESIGN_REFERENCE §dag-sequences.md, §instances-core.md
  */
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, markRaw } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   VueFlow,
   useVueFlow,
   type Node,
   type Edge,
   type NodeMouseEvent,
+  type EdgeMouseEvent,
   type NodeDragEvent,
   type NodeComponent,
   MarkerType,
@@ -67,6 +69,11 @@ import NodeDetailPanel from '@/components/canvas/NodeDetailPanel.vue'
 
 const ui = useUiStore()
 const canvas = useCanvasStore()
+const route = useRoute()
+
+// Deep-link: "Open in Canvas" navigates to /canvas?sequence=<id>. Read it once at
+// setup and hand it to the picker, which auto-selects it after its list loads.
+const initialSequenceId = typeof route.query.sequence === 'string' ? route.query.sequence : null
 
 // ---- Vue Flow setup ---------------------------------------------------------
 
@@ -100,6 +107,9 @@ const loadError = ref<string | null>(null)
 const detailOpen = ref(false)
 const detailNodeData = ref<CanvasNodeData | null>(null)
 const selectedNodeId = ref<string | null>(null)
+// Set when the drawer is opened via a router edge click, so the panel can
+// highlight the matching route's condition. Cleared on a plain node click.
+const focusRouteIndex = ref<number | null>(null)
 
 // Picker state (v-model on pickers)
 const pickerSequenceId = ref<string | null>(null)
@@ -157,6 +167,10 @@ async function rebuildGraph(opts: { fit?: boolean } = {}) {
     type: spec.edgeType === 'back' ? 'smoothstep' : 'default',
     animated: spec.animated ?? false,
     label: spec.label,
+    // Editable edges (router conditions) carry their owner so a click can open the
+    // matching editor; `edge-editable` gives them a pointer-cursor affordance.
+    data: spec.editable,
+    class: spec.editable ? 'edge-editable' : undefined,
     markerEnd: MarkerType.ArrowClosed,
     style:
       spec.edgeType === 'back'
@@ -258,6 +272,25 @@ function onNodeClick(event: NodeMouseEvent) {
   if (!nodeData?.block) return
   detailNodeData.value = nodeData
   selectedNodeId.value = nodeData.block.id
+  focusRouteIndex.value = null
+  detailOpen.value = true
+}
+
+// ---- Edge click → edit the underlying config (router route conditions) -------
+// Edges are derived, not free-drawn; an "editable" edge maps back to a block's
+// config. Clicking one opens that block's detail editor (reusing the node's data)
+// and highlights the relevant route.
+function onEdgeClick(e: EdgeMouseEvent) {
+  const meta = e.edge.data as { ownerId: string; routeIndex?: number } | undefined
+  if (!meta?.ownerId) return
+  // Cast to a minimal shape before .find — Vue Flow's full `Node` generic makes
+  // array ops blow the instantiation-depth budget (same pattern as onNodeDragStop).
+  const list = nodes.value as unknown as Array<{ id: string; data: CanvasNodeData }>
+  const node = list.find((n) => n.id === meta.ownerId)
+  if (!node) return
+  detailNodeData.value = node.data
+  selectedNodeId.value = meta.ownerId
+  focusRouteIndex.value = meta.routeIndex ?? null
   detailOpen.value = true
 }
 
@@ -473,6 +506,7 @@ const errorCount = computed(() => Object.keys(canvas.blockErrors).length + canva
         <SequencePicker
           v-model="pickerSequenceId"
           v-model:version-value="pickerVersionId"
+          :initial-sequence-id="initialSequenceId"
           @load="loadSequenceById"
         />
         <InstancePicker
@@ -552,6 +586,7 @@ const errorCount = computed(() => Object.keys(canvas.blockErrors).length + canva
         class="h-full w-full"
         :style="{ background: 'transparent' }"
         @node-click="onNodeClick"
+        @edge-click="onEdgeClick"
         @node-drag-stop="onNodeDragStop"
         @node-context-menu="onNodeContextMenu"
         @pane-click="closeCtx"
@@ -621,6 +656,7 @@ const errorCount = computed(() => Object.keys(canvas.blockErrors).length + canva
       :node-data="detailNodeData"
       :error="detailError"
       :move-targets="moveTargets"
+      :focus-route-index="focusRouteIndex"
       @update-config="panelUpdateConfig"
       @delete="panelDelete"
       @reorder="panelReorder"
@@ -675,5 +711,16 @@ const errorCount = computed(() => Object.keys(canvas.blockErrors).length + canva
   .vue-flow__node {
     transition: none;
   }
+}
+
+/* Editable edges (router conditions) hint that they're clickable. */
+.vue-flow__edge.edge-editable {
+  cursor: pointer;
+}
+.vue-flow__edge.edge-editable:hover .vue-flow__edge-path {
+  stroke-width: 2.5;
+}
+.vue-flow__edge.edge-editable .vue-flow__edge-text {
+  cursor: pointer;
 }
 </style>

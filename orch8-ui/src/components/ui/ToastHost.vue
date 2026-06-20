@@ -14,8 +14,15 @@ const accent: Record<ToastTone, string> = {
 </script>
 
 <template>
-  <div class="pointer-events-none fixed bottom-4 right-4 z-[100] flex w-[380px] max-w-[calc(100vw-2rem)] flex-col gap-2.5">
-    <TransitionGroup name="toast">
+  <!-- Teleport to <body>: #app has `isolation: isolate`, creating a stacking
+       context. The Drawer / Confirm / canvas ctx-menu all teleport to <body>, so
+       a toast rendered INSIDE #app is trapped below them no matter how high its
+       z-index. Teleporting lifts it to the body stacking context; z-[140] then
+       puts it above Drawer 110, Confirm 120, ctx-menu 121, Tooltip 130 so a
+       save/validation error is never occluded by the panel that triggered it. -->
+  <Teleport to="body">
+    <div class="pointer-events-none fixed bottom-4 right-4 z-[140] flex w-[380px] max-w-[calc(100vw-2rem)] flex-col gap-2.5">
+      <TransitionGroup name="toast">
       <div
         v-for="t in ui.toasts"
         :key="t.id"
@@ -35,8 +42,9 @@ const accent: Record<ToastTone, string> = {
           <X :size="15" />
         </button>
       </div>
-    </TransitionGroup>
-  </div>
+      </TransitionGroup>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
