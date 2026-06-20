@@ -18,7 +18,7 @@ export type BlockType =
   | 'router'
   | 'try_catch'
   | 'sub_sequence'
-  | 'ab_split'
+  | 'a_b_split'
   | 'cancellation_scope'
 
 export type RaceSemantics = 'first_to_resolve' | 'first_to_succeed'
@@ -172,7 +172,7 @@ export interface ABVariant {
 }
 
 export interface ABSplitBlock {
-  type: 'ab_split'
+  type: 'a_b_split'
   id: string
   variants: ABVariant[]
 }

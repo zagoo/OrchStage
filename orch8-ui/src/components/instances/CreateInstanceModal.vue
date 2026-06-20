@@ -44,7 +44,7 @@ const modeSegments = [
 const form = ref({
   sequence_id: '',
   namespace: conn.tenantId ? '' : '',
-  priority: 'normal' as Priority,
+  priority: 'Normal' as Priority,
   idempotency_key: '',
   context_data: '{}',
   context_config: '{}',
@@ -65,10 +65,10 @@ const batchJson = ref(`[
 const batchError = ref<string | null>(null)
 
 const priorityOptions = [
-  { value: 'low',      label: 'Low' },
-  { value: 'normal',   label: 'Normal' },
-  { value: 'high',     label: 'High' },
-  { value: 'critical', label: 'Critical' },
+  { value: 'Low',      label: 'Low' },
+  { value: 'Normal',   label: 'Normal' },
+  { value: 'High',     label: 'High' },
+  { value: 'Critical', label: 'Critical' },
 ]
 
 const canSubmit = computed(() => !saving.value)
@@ -80,7 +80,7 @@ watch(open, (v) => {
     form.value = {
       sequence_id: '',
       namespace: '',
-      priority: 'normal',
+      priority: 'Normal',
       idempotency_key: '',
       context_data: '{}',
       context_config: '{}',

@@ -70,7 +70,18 @@ const canvas = useCanvasStore()
 
 // ---- Vue Flow setup ---------------------------------------------------------
 
-const { fitView } = useVueFlow()
+const { fitView, onNodesInitialized } = useVueFlow()
+
+// Fit the view only once VueFlow has actually MEASURED the nodes. Calling
+// fitView right after setting nodes races the measurement pass (and silently
+// no-ops while the container has no height), so gate the load-time fit on this
+// event. Mutations don't set the flag, so editing never yanks the viewport.
+const fitPending = ref(false)
+onNodesInitialized(() => {
+  if (!fitPending.value) return
+  fitPending.value = false
+  void fitView({ padding: 0.14, duration: 300 })
+})
 
 // SFC DefineComponent isn't structurally a Vue Flow NodeComponent, so cast at
 // this single boundary; markRaw keeps the component out of the reactivity graph.
@@ -102,7 +113,8 @@ async function loadSequenceById(seq: SequenceDefinition) {
   loadError.value = null
   try {
     canvas.loadSequence(seq) // clones into editable.definition (source of truth)
-    await rebuildGraph({ fit: true })
+    fitPending.value = true // fit once VueFlow has measured the new nodes
+    await rebuildGraph()
   } catch (e) {
     loadError.value = errorMessage(e)
   } finally {
@@ -450,7 +462,7 @@ const errorCount = computed(() => Object.keys(canvas.blockErrors).length + canva
 </script>
 
 <template>
-  <div class="flex h-full flex-col">
+  <div class="flex min-h-0 flex-1 flex-col">
     <!-- Page header -->
     <PageHeader
       title="Flow Canvas"

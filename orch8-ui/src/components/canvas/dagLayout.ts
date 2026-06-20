@@ -5,7 +5,7 @@
  * Algorithm:
  *  1. Traverse the block tree depth-first, assigning a (depth, index) pair.
  *  2. Leaf nodes at the same depth are spaced horizontally.
- *  3. Composite nodes (parallel/race/router/try_catch/loop/for_each/ab_split/
+ *  3. Composite nodes (parallel/race/router/try_catch/loop/for_each/a_b_split/
  *     cancellation_scope) expand their children into sub-columns.
  *  4. x = column * COL_WIDTH + horizontal_offset; y = depth * ROW_HEIGHT.
  *
@@ -104,7 +104,7 @@ function getBranchSets(block: BlockDefinition): BlockDefinition[][] {
       if (block.finally_block && block.finally_block.length > 0) sets.push(block.finally_block)
       return sets
     }
-    case 'ab_split':
+    case 'a_b_split':
       return block.variants.map((v) => v.blocks)
     default:
       return []
@@ -144,7 +144,7 @@ function getChildrenBlocks(block: BlockDefinition): BlockDefinition[] {
       if (block.finally_block) all.push(...block.finally_block)
       return all
     }
-    case 'ab_split':
+    case 'a_b_split':
       return block.variants.flatMap((v) => v.blocks)
     case 'cancellation_scope':
       return block.blocks
@@ -353,7 +353,7 @@ function collectChildEdges(block: BlockDefinition): EdgeSpec[] {
       break
     }
 
-    case 'ab_split': {
+    case 'a_b_split': {
       for (const variant of block.variants) {
         if (variant.blocks.length > 0) {
           edges.push({

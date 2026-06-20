@@ -6,6 +6,11 @@ coverage/
 .vite/
 *.tsbuildinfo
 .DS_Store
+# Playwright (browser E2E) artifacts
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
 .env
 .env.*
 !.env.example

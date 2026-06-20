@@ -98,13 +98,52 @@ Implemented with `@vue-flow/core` (+ background, controls, minimap):
 - **`DESIGN_REFERENCE.md` hub** is the first-pass synthesis; its global-conventions / DAG-topology / RBAC sections are summaries — the **authoritative depth lives in the 13 `docs/_ref/*.md` sections** (complete). A clean re-synthesis was deferred after repeated platform socket failures on the long synthesis agent.
 - **Backend-shaped limitations surfaced honestly in-UI:** Sessions has no list endpoint (lookup-by-id/key pattern); Audit is per-instance only; Model Pricing is read-only (no write endpoint); Mobile is a conditional surface (friendly disabled notice on 404); Rollback history and Queue-routing edit have no endpoints (create/delete only).
 
+## 9. Live E2E Integration Phase — executed against a running server
+
+A full live integration pass was run against `orch8-server` at `http://localhost:8080`.
+Two layers were added, both hitting the real server (no mocks): a **Vitest live-API
+suite** (`e2e/live/`, driving the UI's own API client + types + `validateSequence`)
+and a **Playwright browser suite** (`e2e/browser/`, driving Chromium through the
+same-origin dev proxy). See `e2e/README.md` to run them.
+
+### Results — all green
+
+| Suite | Tests | Covers |
+|---|---|---|
+| Unit / contract (jsdom) | 629 | components, stores, api clients, treeOps |
+| Live API (node) | 29 | handshake, save/export round-trip, validation parity, execution + SSE |
+| Browser (Chromium) | 4 | connect-via-proxy, live list, create-instance modal, canvas edit |
+
+Round-trip covers linear, **every block type**, deeply-nested composites, the
+`a_b_split` regression, and a 60-block DAG. Execution covers `running → completed`
+state transitions, the `ExecutionNode` tree, and the SSE `text/event-stream` channel.
+
+### Bugs found via live reconciliation — fixed
+
+1. **`ab_split` → `a_b_split`** discriminator mismatch. The server enum is
+   `a_b_split`; the UI emitted `ab_split`, so **every A/B-split block was unsavable**
+   (`422 unknown variant`). Renamed across types, `treeOps`, `dagLayout`,
+   `blockConfig`, `BlockTree`. Proven by a contract regression test.
+2. **`Priority` casing.** Server enum is `Low|Normal|High|Critical`; the UI sent
+   lowercase, so **creating an instance via the modal failed** (`422`). Fixed the
+   type + `CreateInstanceModal` options/defaults.
+3. **Validation-parity gaps.** The server hard-rejects (`400`) empty `loop`/`for_each`
+   bodies and single-variant `a_b_split`; the UI Save gate allowed them.
+   `validateSequence` now mirrors the backend exactly. (Empty parallel-branch /
+   router-route / off-100 weights remain soft warnings server-side, so the UI
+   correctly does **not** block them.)
+
+No product defects remain open from this pass.
+
 ## How to run
 
 ```bash
 cd orch8-ui
 npm install
 ORCH8_API_URL=http://127.0.0.1:8080 npm run dev   # dev server proxies /api, /health, /info, /metrics, /mobile
-npm run build       # type-checked production build
-npm test            # 578 unit/contract tests
-npm run coverage    # coverage report
+npm run build             # type-checked production build
+npm test                  # 629 unit/contract tests
+npm run test:e2e          # 29 live API integration tests   (needs orch8-server)
+npm run test:e2e:browser  # 4 Playwright browser tests      (needs orch8-server + `npx playwright install chromium`)
+npm run coverage          # coverage report
 ```

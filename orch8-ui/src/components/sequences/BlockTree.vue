@@ -30,7 +30,7 @@ const typeIcon: Record<BlockType, Component> = {
   router: Route,
   try_catch: ShieldAlert,
   sub_sequence: Link,
-  ab_split: SplitSquareHorizontal,
+  a_b_split: SplitSquareHorizontal,
   cancellation_scope: Shield,
 }
 
@@ -43,7 +43,7 @@ const typeName: Record<BlockType, string> = {
   router: 'Router',
   try_catch: 'TryCatch',
   sub_sequence: 'SubSequence',
-  ab_split: 'A/B Split',
+  a_b_split: 'A/B Split',
   cancellation_scope: 'CancellationScope',
 }
 
@@ -56,7 +56,7 @@ const typeColor: Record<BlockType, string> = {
   router: 'text-warning',
   try_catch: 'text-danger',
   sub_sequence: 'text-pink',
-  ab_split: 'text-success',
+  a_b_split: 'text-success',
   cancellation_scope: 'text-muted',
 }
 
@@ -84,7 +84,7 @@ function hasChildren(block: BlockDefinition): boolean {
       return block.routes.length > 0 || (block.default != null && block.default.length > 0)
     case 'try_catch':
       return block.try_block.length > 0
-    case 'ab_split':
+    case 'a_b_split':
       return block.variants.length > 0
     case 'cancellation_scope':
       return block.blocks.length > 0
@@ -222,7 +222,7 @@ function getHandler(block: BlockDefinition): string | null {
         </template>
 
         <!-- A/B Split variants -->
-        <template v-else-if="block.type === 'ab_split'">
+        <template v-else-if="block.type === 'a_b_split'">
           <div
             v-for="variant in block.variants"
             :key="variant.name"

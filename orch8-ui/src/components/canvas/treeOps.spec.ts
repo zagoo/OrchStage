@@ -44,7 +44,7 @@ const loop = (id: string, body: BlockDefinition[]): LoopBlock => ({ type: 'loop'
 const forEach = (id: string, body: BlockDefinition[]): ForEachBlock => ({ type: 'for_each', id, collection: 'items', item_var: 'it', body, max_iterations: 100 })
 const router = (id: string, routes: { condition: string; blocks: BlockDefinition[] }[], def?: BlockDefinition[]): RouterBlock => ({ type: 'router', id, routes, ...(def ? { default: def } : {}) })
 const tryCatch = (id: string, t: BlockDefinition[], c: BlockDefinition[], f?: BlockDefinition[]): TryCatchBlock => ({ type: 'try_catch', id, try_block: t, catch_block: c, ...(f ? { finally_block: f } : {}) })
-const abSplit = (id: string, variants: { name: string; weight: number; blocks: BlockDefinition[] }[]): ABSplitBlock => ({ type: 'ab_split', id, variants })
+const abSplit = (id: string, variants: { name: string; weight: number; blocks: BlockDefinition[] }[]): ABSplitBlock => ({ type: 'a_b_split', id, variants })
 const cancelScope = (id: string, blocks: BlockDefinition[]): CancellationScopeBlock => ({ type: 'cancellation_scope', id, blocks })
 const subSeq = (id: string, name = 'sub'): SubSequenceBlock => ({ type: 'sub_sequence', id, sequence_name: name })
 
@@ -286,6 +286,22 @@ describe('validateSequence', () => {
     expect(validateSequence([forEach('fe', [step('x')])]).valid).toBe(true)
     const badForEach: ForEachBlock = { type: 'for_each', id: 'fe', collection: '', item_var: '', body: [step('x')], max_iterations: 1 }
     expect(validateSequence([badForEach]).blockErrors['fe']).toMatch(/collection/)
+  })
+  it('mirrors backend structural minimums (loop/for_each body, a_b_split variants)', () => {
+    // The live server rejects each of these with HTTP 400; the Save gate must too.
+    const emptyLoop: LoopBlock = { type: 'loop', id: 'lp', condition: 'x', body: [], max_iterations: 3, continue_on_error: false }
+    expect(validateSequence([emptyLoop]).blockErrors['lp']).toMatch(/body must not be empty/i)
+
+    const emptyForEach: ForEachBlock = { type: 'for_each', id: 'fe', collection: 'c', item_var: 'i', body: [], max_iterations: 3 }
+    expect(validateSequence([emptyForEach]).blockErrors['fe']).toMatch(/body must not be empty/i)
+
+    const oneVariant = abSplit('ab', [{ name: 'A', weight: 100, blocks: [step('a')] }])
+    expect(validateSequence([oneVariant]).blockErrors['ab']).toMatch(/at least 2 variants/i)
+    const twoVariants = abSplit('ab', [
+      { name: 'A', weight: 50, blocks: [step('a')] },
+      { name: 'B', weight: 50, blocks: [step('b')] },
+    ])
+    expect(validateSequence([twoVariants]).valid).toBe(true)
   })
   it('does not report loop back-edges as cycles', () => {
     const res = validateSequence([loop('lp', [step('l0')])])

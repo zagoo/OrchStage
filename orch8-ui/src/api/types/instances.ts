@@ -27,7 +27,9 @@ export function isTerminal(state: InstanceState): boolean {
   return TERMINAL_STATES.has(state)
 }
 
-export type Priority = 'low' | 'normal' | 'high' | 'critical'
+// Server enum is PascalCase (`Low`/`Normal`/`High`/`Critical`); sending lowercase
+// is rejected with HTTP 422 `unknown variant`. Verified against live orch8-server.
+export type Priority = 'Low' | 'Normal' | 'High' | 'Critical'
 
 // --- ExecutionContext ---------------------------------------------------------
 

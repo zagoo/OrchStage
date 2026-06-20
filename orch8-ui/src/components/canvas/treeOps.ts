@@ -11,7 +11,7 @@
  *   loop|for_each      → body
  *   router             → routes[].blocks (+ default)
  *   try_catch          → try_block / catch_block / finally_block
- *   ab_split           → variants[].blocks
+ *   a_b_split           → variants[].blocks
  *   cancellation_scope → blocks
  *   step|sub_sequence  → (leaf, no children)
  *
@@ -69,7 +69,7 @@ export function getContainers(block: BlockDefinition): Container[] {
       if (block.finally_block) cs.push({ key: 'finally', label: 'Finally', blocks: block.finally_block })
       return cs
     }
-    case 'ab_split':
+    case 'a_b_split':
       return block.variants.map((v, i) => ({
         key: `variant:${i}`,
         label: v.name || `Variant ${i + 1}`,
@@ -110,7 +110,7 @@ export function mapContainers(
         catch_block: fn('catch', block.catch_block),
         ...(block.finally_block ? { finally_block: fn('finally', block.finally_block) } : {}),
       }
-    case 'ab_split':
+    case 'a_b_split':
       return { ...block, variants: block.variants.map((v, i) => ({ ...v, blocks: fn(`variant:${i}`, v.blocks) })) }
     case 'cancellation_scope':
       return { ...block, blocks: fn('scope', block.blocks) }
@@ -362,13 +362,17 @@ function requiredFieldError(b: BlockDefinition): string | null {
     case 'try_catch':
       return b.try_block.length > 0 ? null : 'Try/catch requires a non-empty try block.'
     case 'loop':
-      return b.condition && b.condition.trim() ? null : 'Loop requires a condition.'
+      // Mirror backend hard constraints: condition required AND non-empty body
+      // (server: "loop body must not be empty").
+      if (!b.condition || !b.condition.trim()) return 'Loop requires a condition.'
+      return b.body.length > 0 ? null : 'Loop body must not be empty.'
     case 'for_each':
-      return b.collection && b.collection.trim() && b.item_var && b.item_var.trim()
-        ? null
-        : 'For-each requires a collection and an item variable.'
-    case 'ab_split':
-      return b.variants.length > 0 ? null : 'A/B split requires at least one variant.'
+      if (!b.collection || !b.collection.trim() || !b.item_var || !b.item_var.trim())
+        return 'For-each requires a collection and an item variable.'
+      return b.body.length > 0 ? null : 'For-each body must not be empty.'
+    case 'a_b_split':
+      // Server rejects a single-variant split ("must have at least 2 variants").
+      return b.variants.length >= 2 ? null : 'A/B split requires at least 2 variants.'
     case 'cancellation_scope':
       return b.blocks.length > 0 ? null : 'Cancellation scope requires at least one block.'
     default:

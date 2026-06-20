@@ -238,10 +238,10 @@ describe('buildEdges — try_catch arms', () => {
   })
 })
 
-describe('buildEdges — ab_split', () => {
+describe('buildEdges — a_b_split', () => {
   const blocks: BlockDefinition[] = [
     {
-      type: 'ab_split',
+      type: 'a_b_split',
       id: 'ab1',
       variants: [
         { name: 'control', weight: 70, blocks: [step('ctrl_step')] },

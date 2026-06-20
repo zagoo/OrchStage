@@ -13,7 +13,7 @@ import {
   GitFork,       // router
   Shield,        // try_catch
   ExternalLink,  // sub_sequence
-  Shuffle,       // ab_split
+  Shuffle,       // a_b_split
   Lock,          // cancellation_scope
   // handler-specific icons for step sub-types
   Globe,         // http_request
@@ -140,7 +140,7 @@ export const BLOCK_VISUAL: Record<BlockType, BlockVisual> = {
     colorClass: 'text-pink bg-pink-soft',
     label: 'SubSequence',
   },
-  ab_split: {
+  a_b_split: {
     icon: Shuffle,
     colorClass: 'text-warning bg-warning-soft',
     label: 'ABSplit',

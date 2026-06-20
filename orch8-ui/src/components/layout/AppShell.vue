@@ -9,8 +9,8 @@ import Topbar from './Topbar.vue'
     <Sidebar />
     <div class="flex min-w-0 flex-1 flex-col">
       <Topbar />
-      <main class="flex-1 overflow-y-auto">
-        <div class="mx-auto max-w-[1640px] px-6 py-6">
+      <main class="flex flex-1 flex-col overflow-y-auto">
+        <div class="mx-auto flex w-full max-w-[1640px] flex-1 flex-col px-6 py-6">
           <RouterView v-slot="{ Component, route }">
             <Transition name="page" mode="out-in">
               <component :is="Component" :key="route.path" />
