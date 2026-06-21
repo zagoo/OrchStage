@@ -26,4 +26,18 @@ describe('JsonExampleControls', () => {
     await insert!.trigger('click')
     expect(w.emitted('insert')).toBeTruthy()
   })
+
+  it('lists the allowed values & ranges when constraints are provided', () => {
+    const w = mount(JsonExampleControls, {
+      props: { value, constraints: [{ param: 'method', label: 'one of: GET, POST, PUT, PATCH, DELETE' }] },
+    })
+    expect(w.text()).toContain('Allowed values')
+    expect(w.text()).toContain('method')
+    expect(w.text()).toContain('one of: GET, POST, PUT, PATCH, DELETE')
+  })
+
+  it('omits the constraints section when none are provided', () => {
+    const w = mount(JsonExampleControls, { props: { value } })
+    expect(w.text()).not.toContain('Allowed values')
+  })
 })

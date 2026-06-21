@@ -314,6 +314,27 @@ describe('validateSequence', () => {
     const plain: StepBlock = { type: 'step', id: 'lg', handler: 'log', params: {}, cancellable: false }
     expect(validateSequence([plain]).valid).toBe(true)
   })
+  it('flags a step whose handler param VALUE breaks a constraint (round 12 value validation)', () => {
+    // bad enum value (signal_type not in the source enum)
+    const badEnum: StepBlock = {
+      type: 'step',
+      id: 'sig',
+      handler: 'send_signal',
+      params: { instance_id: 'i', signal_type: 'bogus' },
+      cancellable: false,
+    }
+    const r1 = validateSequence([badEnum])
+    expect(r1.valid).toBe(false)
+    expect(r1.blockErrors['sig']).toMatch(/signal_type must be one of/)
+
+    // out-of-range number (agent.max_iterations clamp is 1–50)
+    const badRange: StepBlock = { type: 'step', id: 'ag', handler: 'agent', params: { max_iterations: 99 }, cancellable: false }
+    expect(validateSequence([badRange]).blockErrors['ag']).toMatch(/max_iterations must be an integer 1–50/)
+
+    // valid enum value passes
+    const ok: StepBlock = { ...badEnum, id: 'sig2', params: { instance_id: 'i', signal_type: 'cancel' } }
+    expect(validateSequence([ok]).valid).toBe(true)
+  })
   it('mirrors backend structural minimums (loop/for_each body, a_b_split variants)', () => {
     // The live server rejects each of these with HTTP 400; the Save gate must too.
     const emptyLoop: LoopBlock = { type: 'loop', id: 'lp', condition: 'x', body: [], max_iterations: 3, continue_on_error: false }

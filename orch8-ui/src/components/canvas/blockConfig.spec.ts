@@ -10,6 +10,9 @@ import {
   HANDLER_PARAM_TEMPLATE,
   HANDLER_PARAM_REQUIREMENTS,
   missingHandlerParams,
+  HANDLER_PARAM_CONSTRAINTS,
+  handlerParamConstraints,
+  invalidHandlerParams,
   STEP_HANDLERS,
   BLOCK_VISUAL,
   BLOCK_TYPE_DESCRIPTION,
@@ -162,5 +165,76 @@ describe('missingHandlerParams — required-param validation (Bug 3)', () => {
     expect(missingHandlerParams('http_request', null)).toEqual(['url'])
     expect(missingHandlerParams('http_request', 'oops')).toEqual(['url'])
     expect(missingHandlerParams('query_instance', undefined)).toEqual(['instance_id'])
+  })
+})
+
+describe('handler param VALUE constraints — display surface (round 12)', () => {
+  it('every constrained param carries a non-trivial allowed-values label', () => {
+    for (const [h, cons] of Object.entries(HANDLER_PARAM_CONSTRAINTS)) {
+      expect(cons.length, h).toBeGreaterThan(0)
+      for (const c of cons) {
+        expect(c.param, `${h} param`).toBeTruthy()
+        expect(c.label.length, `${h}.${c.param} label`).toBeGreaterThan(3)
+      }
+    }
+  })
+
+  it('enum labels enumerate EVERY allowed value the source defines', () => {
+    const labelFor = (h: string, p: string) => handlerParamConstraints(h).find((c) => c.param === p)!.label
+    expect(labelFor('send_signal', 'signal_type')).toContain('pause, resume, cancel, update_context')
+    expect(labelFor('http_request', 'method')).toContain('GET, POST, PUT, PATCH, DELETE')
+    expect(labelFor('tool_call', 'method')).toContain('GET, POST, PUT, PATCH')
+    expect(labelFor('mcp_call', 'action')).toContain('call, list')
+    expect(labelFor('agent', 'max_iterations')).toContain('1–50')
+    expect(labelFor('blob_get', 'encoding')).toContain('base64, utf8')
+    expect(labelFor('emit_event', 'dedupe_scope')).toContain('parent, tenant')
+  })
+
+  it('handlerParamConstraints returns [] for an unconstrained / unknown handler', () => {
+    expect(handlerParamConstraints('noop')).toEqual([])
+    expect(handlerParamConstraints('totally_custom')).toEqual([])
+  })
+})
+
+describe('invalidHandlerParams — value validation (round 12)', () => {
+  it('rejects a bad enum value, accepts a valid one (and the custom object form)', () => {
+    expect(invalidHandlerParams('send_signal', { signal_type: 'bogus' })[0]).toMatch(/signal_type must be one of/)
+    expect(invalidHandlerParams('send_signal', { signal_type: 'cancel' })).toEqual([])
+    expect(invalidHandlerParams('send_signal', { signal_type: { custom: 'x' } })).toEqual([])
+    expect(invalidHandlerParams('log', { level: 'warning' })[0]).toMatch(/level must be one of: debug, info, warn/)
+    expect(invalidHandlerParams('mcp_call', { action: 'invoke' })[0]).toMatch(/action must be one of: call, list/)
+  })
+
+  it('http_request method allows DELETE; tool_call method does NOT', () => {
+    expect(invalidHandlerParams('http_request', { url: 'https://x', method: 'DELETE' })).toEqual([])
+    expect(invalidHandlerParams('tool_call', { url: 'https://x', method: 'DELETE' })[0]).toMatch(/method must be one of: GET, POST, PUT, PATCH/)
+  })
+
+  it('rejects out-of-range / non-integer numbers', () => {
+    expect(invalidHandlerParams('agent', { max_iterations: 0 })[0]).toMatch(/max_iterations must be an integer 1–50/)
+    expect(invalidHandlerParams('agent', { max_iterations: 51 })[0]).toMatch(/1–50/)
+    expect(invalidHandlerParams('agent', { max_iterations: 6 })).toEqual([])
+    expect(invalidHandlerParams('memory_search', { top_k: 0 })[0]).toMatch(/top_k must be an integer ≥ 1/)
+    expect(invalidHandlerParams('sleep', { duration_ms: -5 })[0]).toMatch(/duration_ms must be an integer ≥ 0/)
+    expect(invalidHandlerParams('sleep', { duration_ms: 2.5 })[0]).toMatch(/integer/)
+  })
+
+  it('validates URL format and a nested path (agent.tool_dispatch.type)', () => {
+    expect(invalidHandlerParams('http_request', { url: 'ftp://x' })[0]).toMatch(/url must be an http\(s\) URL/)
+    expect(invalidHandlerParams('http_request', { url: 'https://api.example.com' })).toEqual([])
+    expect(invalidHandlerParams('agent', { tool_dispatch: { type: 'grpc' } })[0]).toMatch(/tool_dispatch\.type must be one of: http, mcp/)
+    expect(invalidHandlerParams('agent', { tool_dispatch: { type: 'mcp' } })).toEqual([])
+  })
+
+  it('skips runtime {{ … }} template refs', () => {
+    expect(invalidHandlerParams('send_signal', { signal_type: '{{ state.sig }}' })).toEqual([])
+    expect(invalidHandlerParams('http_request', { url: '{{ config.endpoint }}' })).toEqual([])
+    expect(invalidHandlerParams('agent', { max_iterations: '{{ config.n }}' })).toEqual([])
+  })
+
+  it('ignores absent/blank values and display-only constraints (provider falls back → open set)', () => {
+    expect(invalidHandlerParams('send_signal', { instance_id: 'i' })).toEqual([])
+    expect(invalidHandlerParams('http_request', { url: 'https://x', method: '' })).toEqual([])
+    expect(invalidHandlerParams('llm_call', { provider: 'my-proxy', model: 'm' })).toEqual([])
   })
 })

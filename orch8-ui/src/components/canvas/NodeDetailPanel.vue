@@ -21,6 +21,8 @@ import {
   blockTypeDescription,
   handlerDescription,
   missingHandlerParams,
+  invalidHandlerParams,
+  handlerParamConstraints,
 } from './blockConfig'
 import JsonExampleControls from './JsonExampleControls.vue'
 import { titleCase, formatDateTime, prettyJson } from '@/lib/format'
@@ -201,6 +203,27 @@ const paramMissing = computed<string[]>(() => {
     }
   }
   return missingHandlerParams(h, parsed)
+})
+
+/** Engine value constraints (enum sets / ranges / formats) for the selected handler —
+ * surfaced beside the Params example so every allowed value is visible. */
+const paramConstraints = computed(() => handlerParamConstraints(form.value.handler ?? ''))
+
+/** Present param VALUES that violate the engine's constraints (bad enum / range / URL),
+ * computed live from the Params editor. Empty while the JSON is unparseable. */
+const paramInvalid = computed<string[]>(() => {
+  if (block.value?.type !== 'step') return []
+  const h = form.value.handler
+  if (!h) return []
+  const raw = (form.value.params ?? '').trim()
+  if (raw === '') return []
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return []
+  }
+  return invalidHandlerParams(h, parsed)
 })
 
 // Exact JSON string we last auto-filled, so we can tell an UNEDITED template apart
@@ -417,9 +440,10 @@ function applyConfig() {
 
   // A JSON field failed to parse — keep the panel open with field-level errors.
   if (Object.keys(jsonErrors.value).length > 0) return
-  // A step handler is missing required params — the inline hint shows which; don't
-  // commit (mirrors the engine's required-param contract, blocking an invalid save).
-  if (b.type === 'step' && paramMissing.value.length > 0) return
+  // A step handler is missing required params OR has a value outside the engine's
+  // constraints — the inline hints show which; don't commit (mirrors the engine's
+  // contract, blocking an invalid save).
+  if (b.type === 'step' && (paramMissing.value.length > 0 || paramInvalid.value.length > 0)) return
   emit('update-config', patch)
 }
 
@@ -557,7 +581,11 @@ const tabs = [
                 Cancellable
               </label>
               <Field label="Params (JSON)" :error="jsonErrors.params" class="mb-3">
-                <JsonExampleControls :value="paramsExample()" @insert="form.params = paramsExample()" />
+                <JsonExampleControls
+                  :value="paramsExample()"
+                  :constraints="paramConstraints"
+                  @insert="form.params = paramsExample()"
+                />
                 <Textarea v-model="form.params" :rows="6" class="mono text-[12px]" />
               </Field>
               <!-- Immediate required-param check: the engine rejects a step whose
@@ -573,6 +601,20 @@ const tabs = [
                   <span class="mono">{{ form.handler }}</span> handler requires
                   {{ paramMissing.length > 1 ? 'them' : 'it' }} before saving.
                 </span>
+              </div>
+              <!-- Immediate value check: a param whose value breaks the engine's enum /
+                   range / URL constraints also blocks Apply/Save. -->
+              <div
+                v-if="paramInvalid.length"
+                class="mb-3 rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-[11.5px] text-danger"
+              >
+                <div class="flex items-start gap-2">
+                  <Info :size="13" class="mt-0.5 shrink-0" />
+                  <span class="font-semibold">Invalid param value{{ paramInvalid.length > 1 ? 's' : '' }} — fix before saving:</span>
+                </div>
+                <ul class="ml-[21px] mt-0.5 list-disc space-y-0.5">
+                  <li v-for="msg in paramInvalid" :key="msg">{{ msg }}</li>
+                </ul>
               </div>
               <!-- Safeguard: a handler change never silently wipes custom Params —
                    it offers the template as an explicit opt-in instead. -->

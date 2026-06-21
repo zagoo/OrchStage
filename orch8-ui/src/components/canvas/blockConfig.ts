@@ -274,7 +274,7 @@ export const HANDLER_PARAM_TEMPLATE: Record<string, Json> = {
   http_request: {
     url: 'https://api.example.com/v1/resource',
     method: 'GET',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ${secrets.token}' },
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer <token>' },
     body: '',
     timeout_ms: 10000,
   },
@@ -401,6 +401,140 @@ export function missingHandlerParams(handler: string, params: unknown): string[]
     missing.push('tool_name')
   }
   return missing
+}
+
+/**
+ * Engine-defined VALUE constraints per handler param (enum value sets, numeric
+ * ranges, URL format), derived from orch8-engine/src/handlers/*. Each entry carries
+ * a human-readable `label` (shown beside the param example so the operator sees every
+ * allowed value / range) and an optional machine `rule` used for save-time value
+ * validation. Omitting `rule` makes a constraint display-only — used where the engine
+ * is lenient/open (e.g. llm_call `provider` falls back to openai; message `role` is
+ * enforced by the provider, not the engine).
+ */
+export type ParamValueRule =
+  | { kind: 'enum'; values: string[]; allowObject?: boolean }
+  | { kind: 'int'; min?: number; max?: number }
+  | { kind: 'url' }
+
+export interface ParamConstraint {
+  /** Param key, or a one-level dot path for a nested object (e.g. 'tool_dispatch.type'). */
+  param: string
+  /** Allowed values / range, shown beside the handler's param example. */
+  label: string
+  /** Machine rule validated on save when the value is present; omit for display-only. */
+  rule?: ParamValueRule
+}
+
+export const HANDLER_PARAM_CONSTRAINTS: Record<string, ParamConstraint[]> = {
+  log: [{ param: 'level', label: 'one of: debug, info, warn', rule: { kind: 'enum', values: ['debug', 'info', 'warn'] } }],
+  sleep: [{ param: 'duration_ms', label: 'integer ≥ 0 (milliseconds)', rule: { kind: 'int', min: 0 } }],
+  http_request: [
+    { param: 'url', label: 'http(s) URL — public host (SSRF-guarded at runtime)', rule: { kind: 'url' } },
+    { param: 'method', label: 'one of: GET, POST, PUT, PATCH, DELETE', rule: { kind: 'enum', values: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] } },
+    { param: 'timeout_ms', label: 'integer ≥ 0 (default 10000)', rule: { kind: 'int', min: 0 } },
+  ],
+  tool_call: [
+    { param: 'url', label: 'http(s) URL — public host (SSRF-guarded at runtime)', rule: { kind: 'url' } },
+    { param: 'method', label: 'one of: GET, POST, PUT, PATCH (default POST)', rule: { kind: 'enum', values: ['GET', 'POST', 'PUT', 'PATCH'] } },
+    { param: 'timeout_ms', label: 'integer ≥ 0 (default 30000)', rule: { kind: 'int', min: 0 } },
+  ],
+  mcp_call: [
+    { param: 'action', label: 'one of: call, list', rule: { kind: 'enum', values: ['call', 'list'] } },
+    { param: 'url', label: 'http(s) URL when set (or use `server`)', rule: { kind: 'url' } },
+    { param: 'timeout_ms', label: 'integer ≥ 0 (default 30000)', rule: { kind: 'int', min: 0 } },
+  ],
+  agent: [
+    { param: 'max_iterations', label: 'integer 1–50 (clamped to 50)', rule: { kind: 'int', min: 1, max: 50 } },
+    { param: 'tool_dispatch.type', label: 'one of: http, mcp', rule: { kind: 'enum', values: ['http', 'mcp'] } },
+  ],
+  send_signal: [
+    {
+      param: 'signal_type',
+      label: 'one of: pause, resume, cancel, update_context — or { "custom": "name" }',
+      rule: { kind: 'enum', values: ['pause', 'resume', 'cancel', 'update_context'], allowObject: true },
+    },
+  ],
+  emit_event: [{ param: 'dedupe_scope', label: 'one of: parent, tenant (when set)', rule: { kind: 'enum', values: ['parent', 'tenant'] } }],
+  blob_get: [
+    { param: 'encoding', label: 'one of: base64, utf8 (alias: text)', rule: { kind: 'enum', values: ['base64', 'utf8', 'text'] } },
+    { param: 'max_size_bytes', label: 'integer ≥ 1 (default 26214400 = 25 MiB)', rule: { kind: 'int', min: 1 } },
+  ],
+  blob_put: [{ param: 'max_size_bytes', label: 'integer ≥ 1 (default 26214400 = 25 MiB)', rule: { kind: 'int', min: 1 } }],
+  memory_search: [{ param: 'top_k', label: 'integer ≥ 1 (default 5)', rule: { kind: 'int', min: 1 } }],
+  llm_call: [
+    // provider falls back to openai for unknown values (open set) → display-only.
+    { param: 'provider', label: 'preset: openai, anthropic, gemini, deepseek, qwen, perplexity, groq, together, mistral, openrouter (or custom with base_url)' },
+    { param: 'max_tokens', label: 'integer ≥ 1 (default 4096)', rule: { kind: 'int', min: 1 } },
+    // role is enforced by the provider API, not the engine → display-only.
+    { param: 'messages[].role', label: 'each message role: system, user, assistant, tool' },
+  ],
+}
+
+/** The engine-defined value constraints for a handler (display + validation source). */
+export function handlerParamConstraints(handler: string): ParamConstraint[] {
+  return HANDLER_PARAM_CONSTRAINTS[handler] ?? []
+}
+
+/** A `{{ … }}` template reference is resolved at runtime — skip static value checks. */
+function isTemplateRef(v: unknown): boolean {
+  return typeof v === 'string' && v.includes('{{')
+}
+
+/** Read a value at a one-level dot path ('a' or 'a.b'); returns undefined if absent. */
+function valueAtPath(obj: Record<string, unknown>, path: string): unknown {
+  if (!path.includes('.')) return obj[path]
+  let cur: unknown = obj
+  for (const p of path.split('.')) {
+    if (cur == null || typeof cur !== 'object') return undefined
+    cur = (cur as Record<string, unknown>)[p]
+  }
+  return cur
+}
+
+function rangeText(r: { min?: number; max?: number }): string {
+  if (r.min != null && r.max != null) return `${r.min}–${r.max}`
+  if (r.min != null) return `≥ ${r.min}`
+  if (r.max != null) return `≤ ${r.max}`
+  return ''
+}
+
+/**
+ * Validation messages for PRESENT param values that violate the engine's value
+ * constraints (wrong enum value, out-of-range/non-integer number, malformed URL).
+ * Absent/blank values are ignored here (covered by missingHandlerParams) and runtime
+ * `{{ … }}` template refs are skipped. Drives the live editor hint and the
+ * save-blocking validation, alongside missingHandlerParams.
+ */
+export function invalidHandlerParams(handler: string, params: unknown): string[] {
+  const cons = HANDLER_PARAM_CONSTRAINTS[handler]
+  if (!cons) return []
+  const obj: Record<string, unknown> =
+    params != null && typeof params === 'object' && !Array.isArray(params) ? (params as Record<string, unknown>) : {}
+  const out: string[] = []
+  for (const c of cons) {
+    if (!c.rule) continue
+    const v = valueAtPath(obj, c.param)
+    if (v === undefined || v === null) continue
+    if (typeof v === 'string' && v.trim() === '') continue
+    if (isTemplateRef(v)) continue
+    const r = c.rule
+    if (r.kind === 'enum') {
+      if (typeof v === 'object') {
+        if (!r.allowObject) out.push(`${c.param} must be one of: ${r.values.join(', ')}`)
+      } else if (typeof v !== 'string' || !r.values.includes(v)) {
+        out.push(`${c.param} must be one of: ${r.values.join(', ')}${r.allowObject ? ' (or {"custom":"…"})' : ''}`)
+      }
+    } else if (r.kind === 'int') {
+      if (typeof v !== 'number' || !Number.isInteger(v) || (r.min != null && v < r.min) || (r.max != null && v > r.max)) {
+        const range = rangeText(r)
+        out.push(`${c.param} must be an integer${range ? ' ' + range : ''}`)
+      }
+    } else if (r.kind === 'url') {
+      if (typeof v !== 'string' || !/^https?:\/\//i.test(v)) out.push(`${c.param} must be an http(s) URL`)
+    }
+  }
+  return out
 }
 
 /**

@@ -196,6 +196,32 @@ describe('NodeDetailPanel', () => {
     expect(patch.handler).toBe('send_signal')
   })
 
+  it('shows the handler value constraints (enums/ranges) beside the Params example (round 12)', async () => {
+    const wrapper = mountPanel(stepNodeEmptyParams())
+    await selectWith(wrapper, 'send_signal')!.setValue('send_signal')
+    const txt = wrapper.text()
+    expect(txt).toContain('Allowed values')
+    expect(txt).toContain('signal_type')
+    expect(txt).toContain('pause, resume, cancel, update_context') // every enum value listed
+  })
+
+  it('blocks Apply on an invalid param VALUE, then emits once corrected (round 12)', async () => {
+    const wrapper = mountPanel(stepNodeEmptyParams())
+    await selectWith(wrapper, 'send_signal')!.setValue('send_signal')
+
+    // required param present, but signal_type is not a valid enum value
+    await wrapper.find('textarea').setValue('{"instance_id":"i1","signal_type":"bogus","payload":{}}')
+    expect(wrapper.text()).toContain('Invalid param value')
+    await buttonByText(wrapper, 'Apply changes')!.trigger('click')
+    expect(wrapper.emitted('update-config')).toBeFalsy()
+
+    // correct the value → Apply now commits
+    await wrapper.find('textarea').setValue('{"instance_id":"i1","signal_type":"cancel","payload":{}}')
+    await buttonByText(wrapper, 'Apply changes')!.trigger('click')
+    const patch = wrapper.emitted('update-config')!.at(-1)![0] as Record<string, unknown>
+    expect((patch.params as Record<string, unknown>).signal_type).toBe('cancel')
+  })
+
   it('emits change-type when a different block type is selected', async () => {
     const wrapper = mountPanel()
     const typeSelect = selectWith(wrapper, 'loop')

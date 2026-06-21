@@ -8,8 +8,13 @@
 import { ClipboardPaste } from 'lucide-vue-next'
 import CodeBlock from '@/components/ui/CodeBlock.vue'
 
-/** Pre-formatted (prettyJson) example string — rendered in full and used by Insert. */
-defineProps<{ value: string }>()
+/**
+ * Pre-formatted (prettyJson) example string — rendered in full and used by Insert.
+ * `constraints` (optional) lists each constrained param's allowed values / range /
+ * format, shown under the example so the operator sees every enum value and bound the
+ * source defines — not just the single value the JSON example happens to use.
+ */
+defineProps<{ value: string; constraints?: { param: string; label: string }[] }>()
 defineEmits<{ insert: [] }>()
 </script>
 
@@ -28,5 +33,15 @@ defineEmits<{ insert: [] }>()
     </div>
     <!-- Full example rendered as readable code (all nested levels), with copy. -->
     <CodeBlock :content="value" language="json" max-height="180px" />
+    <!-- Enum values / ranges / formats the source defines for this handler's params. -->
+    <div v-if="constraints && constraints.length" class="mt-1.5">
+      <span class="text-[10.5px] uppercase tracking-wider text-faint">Allowed values &amp; ranges</span>
+      <ul class="mt-1 space-y-0.5">
+        <li v-for="c in constraints" :key="c.param" class="flex gap-1.5 text-[10.5px] leading-snug text-subtle">
+          <span class="mono shrink-0 text-muted">{{ c.param }}</span>
+          <span>{{ c.label }}</span>
+        </li>
+      </ul>
+    </div>
   </div>
 </template>
