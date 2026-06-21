@@ -8,6 +8,8 @@ import type { BlockType } from '@/api/types/sequences'
 import {
   STEP_JSON_FIELD_EXAMPLE,
   HANDLER_PARAM_TEMPLATE,
+  HANDLER_PARAM_REQUIREMENTS,
+  missingHandlerParams,
   STEP_HANDLERS,
   BLOCK_VISUAL,
   BLOCK_TYPE_DESCRIPTION,
@@ -73,5 +75,92 @@ describe('business-logic descriptions (block type + handler)', () => {
 
   it('handlerDescription returns undefined for an unknown/custom handler', () => {
     expect(handlerDescription('totally_custom_handler')).toBeUndefined()
+  })
+})
+
+describe('handler param templates mirror the engine contract (Bug 2 & 3)', () => {
+  const T = HANDLER_PARAM_TEMPLATE as Record<string, Record<string, unknown>>
+
+  it('send_signal uses signal_type (not signal) with a valid enum default', () => {
+    expect(T.send_signal).toHaveProperty('signal_type')
+    expect('signal' in T.send_signal).toBe(false)
+    expect(['pause', 'resume', 'cancel', 'update_context']).toContain(T.send_signal.signal_type)
+    expect(T.send_signal).toHaveProperty('instance_id')
+  })
+
+  it('corrected param names across the handler set (regression guard for the Bug-2 class)', () => {
+    expect(T.emit_event).toHaveProperty('trigger_slug') // not `event`
+    expect('event' in T.emit_event).toBe(false)
+    expect(T.merge_state).toHaveProperty('values') // not `state`
+    expect('state' in T.merge_state).toBe(false)
+    expect(T.tool_call).toHaveProperty('url') // not `tool`
+    expect(T.mcp_call).toHaveProperty('tool_name') // not `tool`
+    expect(T.blob_get).toHaveProperty('ref') // not `key`
+    expect(T.memory_search).toHaveProperty('top_k') // not `limit`
+    expect(T.memory_store).toHaveProperty('text') // not `value`/`namespace`
+    expect(T.llm_call).toHaveProperty('messages') // input is messages, not `prompt`
+    expect('prompt' in T.llm_call).toBe(false)
+    expect('query' in T.http_request).toBe(false) // handler reads no `query`
+    expect(T.fail).toHaveProperty('retryable') // not `code`
+  })
+
+  it('every handler with a required-param contract ships a template declaring those keys', () => {
+    for (const [h, req] of Object.entries(HANDLER_PARAM_REQUIREMENTS)) {
+      const tpl = HANDLER_PARAM_TEMPLATE[h] as Record<string, unknown> | undefined
+      expect(tpl, `template for ${h}`).toBeDefined()
+      for (const k of req.required ?? []) expect(k in (tpl as object), `${h}.${k}`).toBe(true)
+      for (const k of req.requiredAny ?? []) expect(k in (tpl as object), `${h}.${k}`).toBe(true)
+      for (const group of req.oneOf ?? [])
+        expect(group.some((k) => k in (tpl as object)), `${h} oneOf ${group.join('|')}`).toBe(true)
+    }
+  })
+})
+
+describe('missingHandlerParams — required-param validation (Bug 3)', () => {
+  it('flags a send_signal step missing signal_type, passes when present', () => {
+    expect(missingHandlerParams('send_signal', { instance_id: 'i1' })).toEqual(['signal_type'])
+    expect(missingHandlerParams('send_signal', { instance_id: 'i1', signal_type: 'cancel' })).toEqual([])
+    expect(missingHandlerParams('send_signal', {})).toEqual(['instance_id', 'signal_type'])
+  })
+
+  it('treats blank / whitespace strings as missing', () => {
+    expect(missingHandlerParams('emit_event', { trigger_slug: '   ' })).toEqual(['trigger_slug'])
+    expect(missingHandlerParams('assert', { condition: '' })).toEqual(['condition'])
+    expect(missingHandlerParams('http_request', { url: 'https://x' })).toEqual([])
+  })
+
+  it('handlers with no contract never report missing', () => {
+    for (const h of ['log', 'llm_call', 'agent', 'transform', 'noop', 'human_review', 'fail', 'sleep', 'email_send'])
+      expect(missingHandlerParams(h, {}), h).toEqual([])
+  })
+
+  it('oneOf: any one alternative satisfies the requirement', () => {
+    expect(missingHandlerParams('memory_store', {})).toEqual(['text or embedding'])
+    expect(missingHandlerParams('memory_store', { text: 'hi' })).toEqual([])
+    expect(missingHandlerParams('memory_store', { embedding: [0.1] })).toEqual([])
+    expect(missingHandlerParams('blob_put', {})).toEqual(['text or data'])
+    expect(missingHandlerParams('memory_search', { query_embedding: [0.1] })).toEqual([])
+  })
+
+  it('requiredAny: key must be PRESENT but may be empty/null', () => {
+    expect(missingHandlerParams('set_state', { key: 'k' })).toEqual(['value']) // value key absent
+    expect(missingHandlerParams('set_state', { key: 'k', value: '' })).toEqual([]) // empty string OK
+    expect(missingHandlerParams('set_state', { key: 'k', value: null })).toEqual([]) // null OK
+    expect(missingHandlerParams('set_state', { value: 1 })).toEqual(['key']) // key still required non-blank
+    expect(missingHandlerParams('merge_state', {})).toEqual(['values'])
+    expect(missingHandlerParams('merge_state', { values: {} })).toEqual([]) // empty object OK
+  })
+
+  it('mcp_call: needs url-or-server, and tool_name only for action=call', () => {
+    expect(missingHandlerParams('mcp_call', { action: 'call' }).sort()).toEqual(['tool_name', 'url or server'])
+    expect(missingHandlerParams('mcp_call', { url: 'https://m', tool_name: 't' })).toEqual([])
+    expect(missingHandlerParams('mcp_call', { server: 'srv', tool_name: 't' })).toEqual([])
+    expect(missingHandlerParams('mcp_call', { url: 'https://m', action: 'list' })).toEqual([]) // list needs no tool_name
+  })
+
+  it('non-object params are treated as empty (all required reported)', () => {
+    expect(missingHandlerParams('http_request', null)).toEqual(['url'])
+    expect(missingHandlerParams('http_request', 'oops')).toEqual(['url'])
+    expect(missingHandlerParams('query_instance', undefined)).toEqual(['instance_id'])
   })
 })

@@ -168,6 +168,34 @@ describe('NodeDetailPanel', () => {
     expect(wrapper.find('textarea').element.value).toContain('"method"')
   })
 
+  it('selecting send_signal fills signal_type (not signal) and warns about the blank instance_id', async () => {
+    const wrapper = mountPanel(stepNodeEmptyParams())
+    await selectWith(wrapper, 'send_signal')!.setValue('send_signal')
+
+    const text = wrapper.find('textarea').element.value
+    expect(text).toContain('"signal_type"')
+    expect(text).not.toContain('"signal"') // the old, server-rejected key is gone
+    // signal_type defaults to a valid enum; only instance_id is blank → live hint lists it
+    expect(wrapper.text()).toContain('Missing required param')
+    expect(wrapper.text()).toContain('instance_id')
+  })
+
+  it('blocks Apply when a required handler param is missing, then emits once provided (Bug 3)', async () => {
+    const wrapper = mountPanel(stepNodeEmptyParams())
+    await selectWith(wrapper, 'send_signal')!.setValue('send_signal')
+
+    // template instance_id is blank → Apply must NOT commit
+    await buttonByText(wrapper, 'Apply changes')!.trigger('click')
+    expect(wrapper.emitted('update-config')).toBeFalsy()
+
+    // fill the required param → Apply now commits with the corrected param name
+    await wrapper.find('textarea').setValue('{"instance_id":"i1","signal_type":"cancel","payload":{}}')
+    await buttonByText(wrapper, 'Apply changes')!.trigger('click')
+    const patch = wrapper.emitted('update-config')!.at(-1)![0] as Record<string, unknown>
+    expect((patch.params as Record<string, unknown>).signal_type).toBe('cancel')
+    expect(patch.handler).toBe('send_signal')
+  })
+
   it('emits change-type when a different block type is selected', async () => {
     const wrapper = mountPanel()
     const typeSelect = selectWith(wrapper, 'loop')

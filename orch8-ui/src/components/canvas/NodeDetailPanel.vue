@@ -20,6 +20,7 @@ import {
   STEP_JSON_FIELD_EXAMPLE,
   blockTypeDescription,
   handlerDescription,
+  missingHandlerParams,
 } from './blockConfig'
 import JsonExampleControls from './JsonExampleControls.vue'
 import { titleCase, formatDateTime, prettyJson } from '@/lib/format'
@@ -178,6 +179,28 @@ const handlerOptions = computed(() => {
   const cur = form.value.handler
   const list = cur && !STEP_HANDLERS.includes(cur) ? [cur, ...STEP_HANDLERS] : STEP_HANDLERS
   return list.map((h) => ({ value: h, label: h }))
+})
+
+/**
+ * Required params the current step's handler is MISSING, computed live from the
+ * Params editor so the operator sees the gap immediately (before pressing Apply).
+ * Empty while the Params JSON is unparseable — that case surfaces as a JSON error
+ * instead. Drives the inline warning and blocks Apply (applyConfig).
+ */
+const paramMissing = computed<string[]>(() => {
+  if (block.value?.type !== 'step') return []
+  const h = form.value.handler
+  if (!h) return []
+  const raw = (form.value.params ?? '').trim()
+  let parsed: unknown = {}
+  if (raw !== '') {
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      return []
+    }
+  }
+  return missingHandlerParams(h, parsed)
 })
 
 // Exact JSON string we last auto-filled, so we can tell an UNEDITED template apart
@@ -394,6 +417,9 @@ function applyConfig() {
 
   // A JSON field failed to parse — keep the panel open with field-level errors.
   if (Object.keys(jsonErrors.value).length > 0) return
+  // A step handler is missing required params — the inline hint shows which; don't
+  // commit (mirrors the engine's required-param contract, blocking an invalid save).
+  if (b.type === 'step' && paramMissing.value.length > 0) return
   emit('update-config', patch)
 }
 
@@ -534,6 +560,20 @@ const tabs = [
                 <JsonExampleControls :value="paramsExample()" @insert="form.params = paramsExample()" />
                 <Textarea v-model="form.params" :rows="6" class="mono text-[12px]" />
               </Field>
+              <!-- Immediate required-param check: the engine rejects a step whose
+                   handler is missing these, so we surface it live and block Apply/Save. -->
+              <div
+                v-if="paramMissing.length"
+                class="mb-3 flex items-start gap-2 rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-[11.5px] text-danger"
+              >
+                <Info :size="13" class="mt-0.5 shrink-0" />
+                <span>
+                  <span class="font-semibold">Missing required param{{ paramMissing.length > 1 ? 's' : '' }}:</span>
+                  <span class="mono">{{ paramMissing.join(', ') }}</span> — the
+                  <span class="mono">{{ form.handler }}</span> handler requires
+                  {{ paramMissing.length > 1 ? 'them' : 'it' }} before saving.
+                </span>
+              </div>
               <!-- Safeguard: a handler change never silently wipes custom Params —
                    it offers the template as an explicit opt-in instead. -->
               <div

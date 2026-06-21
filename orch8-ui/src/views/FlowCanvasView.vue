@@ -25,12 +25,10 @@ import {
 } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
-import { MiniMap } from '@vue-flow/minimap'
 
 // Import Vue Flow CSS (required)
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/controls/dist/style.css'
-import '@vue-flow/minimap/dist/style.css'
 
 import { Network, RefreshCw, AlertCircle, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight } from 'lucide-vue-next'
 
@@ -103,7 +101,6 @@ const nodeTypes = { 'block-node': markRaw(BlockNode) as unknown as NodeComponent
 
 const nodes = ref<Node[]>([])
 const edges = ref<Edge[]>([])
-const minimapVisible = ref(true)
 const saving = ref(false)
 const loadingSequence = ref(false)
 const loadError = ref<string | null>(null)
@@ -731,21 +728,6 @@ const errorCount = computed(() => Object.keys(canvas.blockErrors).length + canva
       >
         <Background pattern-color="var(--color-border)" :gap="24" :size="1" />
         <Controls :show-interactive="false" class="!bg-surface !border-border" />
-        <MiniMap
-          v-if="minimapVisible"
-          :node-color="(n) => {
-            const data = n.data as CanvasNodeData
-            const state = data?.nodeState
-            if (state === 'running') return 'var(--color-info)'
-            if (state === 'completed') return 'var(--color-success)'
-            if (state === 'failed') return 'var(--color-danger)'
-            if (state === 'waiting') return 'var(--color-warning)'
-            return 'var(--color-surface-2)'
-          }"
-          :node-stroke-width="2"
-          :mask-color="'var(--overlay)'"
-          class="!bg-surface !border-border"
-        />
       </VueFlow>
       </div>
     </div>

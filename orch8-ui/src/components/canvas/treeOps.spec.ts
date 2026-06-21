@@ -293,6 +293,27 @@ describe('validateSequence', () => {
     const badForEach: ForEachBlock = { type: 'for_each', id: 'fe', collection: '', item_var: '', body: [step('x')], max_iterations: 1 }
     expect(validateSequence([badForEach]).blockErrors['fe']).toMatch(/collection/)
   })
+  it('flags a step whose handler is missing required params (Bug 3 required-param gate)', () => {
+    // send_signal requires instance_id + signal_type — only instance_id supplied.
+    const bad: StepBlock = {
+      type: 'step',
+      id: 'sig',
+      handler: 'send_signal',
+      params: { instance_id: 'i1' },
+      cancellable: false,
+    }
+    const res = validateSequence([bad])
+    expect(res.valid).toBe(false)
+    expect(res.blockErrors['sig']).toMatch(/signal_type/)
+
+    // Supplying the missing param satisfies the contract.
+    const good: StepBlock = { ...bad, params: { instance_id: 'i1', signal_type: 'cancel' } }
+    expect(validateSequence([good]).valid).toBe(true)
+
+    // A handler with no required-param contract validates with any/empty params.
+    const plain: StepBlock = { type: 'step', id: 'lg', handler: 'log', params: {}, cancellable: false }
+    expect(validateSequence([plain]).valid).toBe(true)
+  })
   it('mirrors backend structural minimums (loop/for_each body, a_b_split variants)', () => {
     // The live server rejects each of these with HTTP 400; the Save gate must too.
     const emptyLoop: LoopBlock = { type: 'loop', id: 'lp', condition: 'x', body: [], max_iterations: 3, continue_on_error: false }

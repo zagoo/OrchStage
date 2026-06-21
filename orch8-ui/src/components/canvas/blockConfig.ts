@@ -254,59 +254,153 @@ export function handlerDescription(handler: string): string | undefined {
 
 /**
  * Standard starter `params` template per handler. Selecting a handler in the
- * editor fills the Params JSON with the matching shape, so the type-specific
- * inputs are concrete. The server treats unknown handlers/params leniently
- * (201 + warning), so these are editor scaffolding, not a hard schema.
+ * editor fills the Params JSON with the matching shape. Each template mirrors
+ * the engine handler's actual param contract field-for-field (param NAMES, enum
+ * values, nested shapes) — see orch8-engine/src/handlers/*. Required params that
+ * have no safe generic default are left blank ('') so the editor's required-param
+ * validation (see HANDLER_PARAM_REQUIREMENTS) prompts the operator to fill them.
  */
 export const HANDLER_PARAM_TEMPLATE: Record<string, Json> = {
+  // Reads no params.
+  noop: {},
+  // `message` echoed to the instance log; `level` ∈ debug|info|warn (others → info).
   log: { message: '', level: 'info' },
   sleep: { duration_ms: 1000 },
-  // Nested example: headers + query are sub-objects so the full shape is shown.
+  // `retryable` true → step is retried; false → permanent failure.
+  fail: { message: 'forced failure', retryable: false },
+  // `url` REQUIRED (http/https, SSRF-guarded). `method` ∈ GET|POST|PUT|PATCH|DELETE.
+  // `body` is a STRING (sent only when non-empty, as application/json). There is no
+  // `query` param — put query-string params directly in the url.
   http_request: {
-    method: 'GET',
     url: 'https://api.example.com/v1/resource',
+    method: 'GET',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ${secrets.token}' },
-    query: { page: 1, limit: 20 },
-    body: null,
-    timeout_ms: 30000,
+    body: '',
+    timeout_ms: 10000,
   },
+  // The prompt is the `messages` array (role ∈ system|user|assistant|tool). `provider`
+  // ∈ openai|anthropic|gemini|deepseek|qwen|perplexity|groq|together|mistral|openrouter.
   llm_call: {
-    model: 'claude-opus-4-8',
-    prompt: '',
+    provider: 'openai',
+    model: 'gpt-4o',
+    messages: [{ role: 'user', content: '' }],
     system: '',
-    max_tokens: 1024,
     temperature: 0.7,
-    stop_sequences: [],
+    max_tokens: 4096,
   },
-  tool_call: { tool: '', arguments: {} },
-  mcp_call: { server: '', tool: '', arguments: {} },
-  agent: { agent: '', input: {}, tools: [], max_turns: 8 },
+  // `url` REQUIRED (tool endpoint, SSRF-guarded). `method` defaults to POST.
+  tool_call: { url: '', tool_name: '', arguments: {}, method: 'POST', headers: {}, timeout_ms: 30000 },
+  // Endpoint is `url` OR `server`; `tool_name` REQUIRED when action='call'. action ∈ call|list.
+  mcp_call: { url: '', action: 'call', tool_name: '', arguments: {}, headers: {}, timeout_ms: 30000 },
+  // `goal` (or a `messages` array) drives the loop; `tool_dispatch.url` is required once
+  // tools are used. tool_dispatch.type ∈ http|mcp.
+  agent: {
+    goal: '',
+    system: '',
+    model: '',
+    max_iterations: 6,
+    tools: [],
+    tool_dispatch: { type: 'http', url: '' },
+  },
+  // Convenience handler — NOT an engine builtin; the server forwards it leniently.
   email_send: { template: '', to: '', cc: [], data: {} },
-  transform: { expression: '' },
-  assert: { condition: '', message: '' },
-  memory_store: { key: '', value: null, namespace: 'default' },
-  memory_search: { query: '', limit: 10, namespace: 'default' },
-  blob_put: { key: '', content: '', content_type: 'application/octet-stream' },
-  blob_get: { key: '' },
-  // Parallel enumeration: every selectable choice is listed side-by-side.
-  human_review: {
-    prompt: '',
-    choices: [
-      { label: 'Approve', value: 'approve' },
-      { label: 'Reject', value: 'reject' },
-    ],
-    allow_comment: true,
-  },
-  emit_event: { event: '', payload: {} },
-  send_signal: { instance_id: '', signal: '', payload: {} },
+  // Pass-through: the resolved params object is returned verbatim (use ${...} refs).
+  transform: {},
+  assert: { condition: '', message: 'assertion failed' },
+  // one-of: `text` (embedded for you) OR a precomputed `embedding`. `key` defaults to a content hash.
+  memory_store: { text: '', key: '', metadata: {} },
+  // one-of: `query` (embedded for you) OR a precomputed `query_embedding`.
+  memory_search: { query: '', top_k: 5 },
+  // one-of: `text` (utf-8) OR `data` (base64).
+  blob_put: { text: '', content_type: 'text/plain; charset=utf-8' },
+  // `ref` REQUIRED — a stored artifact key (string), or { key } / { artifact: { key } }.
+  // `encoding` ∈ base64|utf8.
+  blob_get: { ref: '', encoding: 'base64' },
+  // Review choices come from the step's `wait_for_input`, NOT from params.
+  human_review: { instructions: '', reviewer: 'unassigned', review_data: null },
+  // `trigger_slug` REQUIRED (the child sequence's trigger). dedupe_scope ∈ parent|tenant.
+  emit_event: { trigger_slug: '', data: {} },
+  // `signal_type` ∈ pause|resume|cancel|update_context, or { custom: 'name' }.
+  send_signal: { instance_id: '', signal_type: 'cancel', payload: {} },
   query_instance: { instance_id: '' },
-  set_state: { key: '', value: null },
+  // `key` REQUIRED; `value` REQUIRED (any JSON value, including null).
+  set_state: { key: '', value: '' },
   get_state: { key: '' },
   delete_state: { key: '' },
-  merge_state: { state: {} },
-  embed: { input: '', model: '' },
-  fail: { message: '', code: '' },
-  noop: {},
+  // `values` REQUIRED — an object merged into this instance's state.
+  merge_state: { values: {} },
+  embed: { input: '', model: 'text-embedding-3-small' },
+}
+
+/**
+ * Required-parameter contract per builtin handler, derived from the engine handler
+ * source (orch8-engine/src/handlers/*). The editor uses this to block a save when a
+ * step's handler is missing params the server would reject at runtime.
+ *
+ *  - `required`    : keys that must be present and non-blank ('' / null = missing).
+ *  - `requiredAny` : keys that must merely be PRESENT (any JSON value, incl. null/'' —
+ *                    e.g. set_state.value / merge_state.values, where an empty value is
+ *                    legitimate but the KEY must exist).
+ *  - `oneOf`       : groups where at least ONE key must be present and non-blank
+ *                    (e.g. memory_store needs `text` OR `embedding`).
+ *
+ * Handlers absent from this map impose no required-param check — noop, log, sleep,
+ * fail, transform, llm_call, agent, human_review (and the non-builtin email_send) all
+ * tolerate missing params at the server.
+ */
+export interface HandlerParamRequirement {
+  required?: string[]
+  requiredAny?: string[]
+  oneOf?: string[][]
+}
+
+export const HANDLER_PARAM_REQUIREMENTS: Record<string, HandlerParamRequirement> = {
+  http_request: { required: ['url'] },
+  tool_call: { required: ['url'] },
+  // url OR server; `tool_name` is additionally required for action='call' (in code below).
+  mcp_call: { oneOf: [['url', 'server']] },
+  assert: { required: ['condition'] },
+  set_state: { required: ['key'], requiredAny: ['value'] },
+  get_state: { required: ['key'] },
+  delete_state: { required: ['key'] },
+  merge_state: { requiredAny: ['values'] },
+  emit_event: { required: ['trigger_slug'] },
+  send_signal: { required: ['instance_id', 'signal_type'] },
+  query_instance: { required: ['instance_id'] },
+  embed: { required: ['input'] },
+  memory_store: { oneOf: [['text', 'embedding']] },
+  memory_search: { oneOf: [['query', 'query_embedding']] },
+  blob_put: { oneOf: [['text', 'data']] },
+  blob_get: { required: ['ref'] },
+}
+
+function isBlankParam(v: unknown): boolean {
+  return v === undefined || v === null || (typeof v === 'string' && v.trim() === '')
+}
+
+/**
+ * The required params a step's handler is MISSING, given its params object. Returns
+ * `[]` when the handler has no required params or all are satisfied. Drives both the
+ * live editor hint and the save-blocking validation (treeOps.validateSequence).
+ */
+export function missingHandlerParams(handler: string, params: unknown): string[] {
+  const req = HANDLER_PARAM_REQUIREMENTS[handler]
+  if (!req) return []
+  const obj: Record<string, unknown> =
+    params != null && typeof params === 'object' && !Array.isArray(params)
+      ? (params as Record<string, unknown>)
+      : {}
+  const missing: string[] = []
+  for (const k of req.required ?? []) if (isBlankParam(obj[k])) missing.push(k)
+  for (const k of req.requiredAny ?? []) if (!(k in obj)) missing.push(k)
+  for (const group of req.oneOf ?? []) {
+    if (group.every((k) => isBlankParam(obj[k]))) missing.push(group.join(' or '))
+  }
+  // mcp_call: `tool_name` is required for the default 'call' action, not for 'list'.
+  if (handler === 'mcp_call' && obj.action !== 'list' && isBlankParam(obj.tool_name)) {
+    missing.push('tool_name')
+  }
+  return missing
 }
 
 /**

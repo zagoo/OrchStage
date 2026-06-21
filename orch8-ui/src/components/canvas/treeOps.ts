@@ -19,6 +19,7 @@
  */
 import type { BlockDefinition, BlockType, StepBlock } from '@/api/types/sequences'
 import { buildEdges } from './dagLayout'
+import { missingHandlerParams } from './blockConfig'
 
 // ---------------------------------------------------------------------------
 // Container model
@@ -441,8 +442,15 @@ export interface ValidationResult {
 
 function requiredFieldError(b: BlockDefinition): string | null {
   switch (b.type) {
-    case 'step':
-      return b.handler && b.handler.trim() ? null : 'Step requires a handler.'
+    case 'step': {
+      if (!b.handler || !b.handler.trim()) return 'Step requires a handler.'
+      // Reject a step whose handler is missing params the engine would reject
+      // (e.g. send_signal without signal_type) — keyed off the handler's source contract.
+      const missing = missingHandlerParams(b.handler, b.params)
+      return missing.length
+        ? `Handler "${b.handler}" is missing required param(s): ${missing.join(', ')}.`
+        : null
+    }
     case 'sub_sequence':
       return b.sequence_name && b.sequence_name.trim() ? null : 'Sub-sequence requires a sequence_name.'
     case 'parallel':
