@@ -10,11 +10,11 @@
  *
  * DESIGN_REFERENCE §dag-sequences.md §3 Block Type Taxonomy
  */
-import { computed } from 'vue'
+import { computed, inject, ref } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import type { CanvasNodeData } from '@/api/types/canvas'
 import type { StepBlock } from '@/api/types/sequences'
-import { BLOCK_VISUAL, NODE_STATE_RING, stepIcon, stepColorClass } from './blockConfig'
+import { BLOCK_VISUAL, NODE_STATE_RING, NODE_TITLE_FIELD, stepIcon, stepColorClass, type NodeTitleField } from './blockConfig'
 import { titleCase } from '@/lib/format'
 
 const props = defineProps<{
@@ -48,6 +48,12 @@ const subtitle = computed(() => {
   return block.value.type
 })
 
+// Which field leads as the node's main title — toggled from the toolbar and
+// provided by FlowCanvasView. Defaults to the block id when rendered standalone.
+const titleField = inject(NODE_TITLE_FIELD, ref<NodeTitleField>('id'))
+const mainText = computed(() => (titleField.value === 'id' ? block.value.id : subtitle.value))
+const subText = computed(() => (titleField.value === 'id' ? subtitle.value : block.value.id))
+
 const ringClass = computed(() => {
   const state = props.data.nodeState
   if (!state) return ''
@@ -79,17 +85,17 @@ const selectedClass = computed(() =>
       </span>
     </div>
 
-    <!-- Block id -->
+    <!-- Main title: block id, or the descriptive field when toggled in the toolbar -->
     <div class="px-2.5 pt-1.5 pb-0.5">
-      <span class="mono block truncate text-[11.5px] text-text font-medium" :title="block.id">
-        {{ block.id }}
+      <span class="mono block truncate text-[11.5px] text-text font-medium" :title="mainText">
+        {{ mainText }}
       </span>
     </div>
 
-    <!-- Subtitle (handler name or sequence name) -->
+    <!-- Secondary line: the other of (id / descriptive field) -->
     <div class="px-2.5 pb-1.5">
-      <span class="truncate text-[10.5px] text-subtle block" :title="subtitle">
-        {{ subtitle }}
+      <span class="mono truncate text-[10.5px] text-subtle block" :title="subText">
+        {{ subText }}
       </span>
     </div>
 

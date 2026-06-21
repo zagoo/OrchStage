@@ -10,7 +10,7 @@
  *
  * DESIGN_REFERENCE §dag-sequences.md, §instances-core.md
  */
-import { ref, computed, watch, onMounted, onUnmounted, nextTick, markRaw } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, markRaw, provide } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   VueFlow,
@@ -39,7 +39,7 @@ import { useCanvasStore } from '@/stores/canvas'
 import { useAsync } from '@/composables/useAsync'
 import { usePolling } from '@/composables/usePolling'
 
-import { saveSequenceVersion, fetchExecutionTree, exportSequenceAsJson } from '@/api/canvas'
+import { persistSequenceEdit, fetchExecutionTree, exportSequenceAsJson } from '@/api/canvas'
 import { errorMessage } from '@/api/errors'
 
 import { computeLayout, buildEdges } from '@/components/canvas/dagLayout'
@@ -49,11 +49,12 @@ import {
   getContainers,
   listContainers,
   descendantIds,
+  collectIds,
   type MoveTarget,
   type ContainerRef,
 } from '@/components/canvas/treeOps'
 import { canFollow, validateWorkflow } from '@/components/canvas/blockRules'
-import { BLOCK_VISUAL } from '@/components/canvas/blockConfig'
+import { BLOCK_VISUAL, NODE_TITLE_FIELD, type NodeTitleField } from '@/components/canvas/blockConfig'
 import type { CanvasNodeData } from '@/api/types/canvas'
 import type { SequenceDefinition, BlockDefinition, BlockType } from '@/api/types/sequences'
 import type { ExecutionNode } from '@/api/types/instances'
@@ -104,6 +105,23 @@ const minimapVisible = ref(true)
 const saving = ref(false)
 const loadingSequence = ref(false)
 const loadError = ref<string | null>(null)
+
+// Full-screen (maximize) the canvas in-app. A CSS overlay (fixed inset-0) is used
+// rather than the native Fullscreen API so the teleported overlays (detail drawer,
+// context menu, confirm/toast — all rendered to <body>) still appear above it.
+const isFullscreen = ref(false)
+function toggleFullscreen() {
+  isFullscreen.value = !isFullscreen.value
+  void nextTick(() => fitView({ padding: 0.12, duration: 200 }))
+}
+
+// Which field leads as a node's main title (block id ↔ descriptive field). Provided
+// to every BlockNode and toggled from the toolbar.
+const nodeTitleField = ref<NodeTitleField>('id')
+provide(NODE_TITLE_FIELD, nodeTitleField)
+function toggleNodeTitle() {
+  nodeTitleField.value = nodeTitleField.value === 'id' ? 'label' : 'id'
+}
 
 // Detail drawer
 const detailOpen = ref(false)
@@ -409,6 +427,23 @@ function panelChangeType(newType: BlockType) {
   // them freely; any incompatibility is caught later by the global Save gate (2.3).
   canvas.changeBlockType(id, newType)
 }
+function panelChangeId(newId: string) {
+  const id = selectedNodeId.value
+  if (!id) return
+  const trimmed = newId.trim()
+  if (!trimmed || trimmed === id) return
+  // Block ids are globally unique (server hard rule) — reject a collision up front.
+  if (collectIds(canvas.blocks).includes(trimmed)) {
+    ui.error('Duplicate block ID', `A block with id "${trimmed}" already exists. IDs must be unique across the workflow.`)
+    return
+  }
+  canvas.changeBlockId(id, trimmed)
+  // Keep the selection + open drawer pointed at the renamed block (do this BEFORE the
+  // blocks watcher flushes, so it finds the new id instead of closing the drawer).
+  selectedNodeId.value = trimmed
+  const fresh = findBlock(canvas.blocks, trimmed)
+  if (fresh && detailNodeData.value) detailNodeData.value = { ...detailNodeData.value, block: fresh }
+}
 function panelDelete() {
   if (selectedNodeId.value) canvas.removeBlock(selectedNodeId.value)
   detailOpen.value = false
@@ -473,26 +508,42 @@ async function handleSave() {
     return
   }
 
-  const ok = await ui.confirm({
-    title: 'Save as new version?',
-    message: 'This creates a new sequence version from your edits. The current version is preserved.',
-    confirmText: 'Save new version',
-    tone: 'default',
-  })
+  // Status decides the save strategy. Production NEVER overwrites — it forks a new
+  // version (with a fresh id, avoiding the PK conflict); draft/staging/unpublished
+  // overwrite their current version in place.
+  const def = ed.definition
+  const willFork = def.status === 'production'
+  const ok = await ui.confirm(
+    willFork
+      ? {
+          title: 'Save as a new version?',
+          message: `"${def.name}" is in production. Saving creates v${def.version + 1} from your edits; the live production version is preserved.`,
+          confirmText: 'Create new version',
+          tone: 'default',
+        }
+      : {
+          title: `Overwrite this ${def.status} version?`,
+          message: `Your edits replace v${def.version} of "${def.name}" in place — no new version is created.`,
+          confirmText: 'Overwrite',
+          tone: 'default',
+        },
+  )
   if (!ok) return
 
   saving.value = true
   try {
-    const def = ed.definition
-    const now = new Date().toISOString()
-    const body = { ...def, version: def.version + 1, created_at: now }
-    const res = await saveSequenceVersion(body)
+    const original = canvas.loadedSequence ?? def
+    const res = await persistSequenceEdit(def, original)
+    canvas.commitSaved(res.saved)
+    const detail =
+      res.mode === 'new-version'
+        ? `v${res.saved.version} created (new version · id ${res.saved.id.slice(0, 8)}…)`
+        : `v${res.saved.version} overwritten in place`
     if (res.warnings && res.warnings.length > 0) {
       ui.warning('Saved with warnings', res.warnings.join('; '))
     } else {
-      ui.success('Version saved', `v${body.version} created (id: ${res.id.slice(0, 8)}…)`)
+      ui.success(res.mode === 'new-version' ? 'New version saved' : 'Sequence saved', detail)
     }
-    canvas.resetDirty()
   } catch (e) {
     ui.error('Save failed', errorMessage(e))
   } finally {
@@ -518,6 +569,11 @@ function onKeyDown(e: KeyboardEvent) {
     }
     if (detailOpen.value) {
       detailOpen.value = false
+      return
+    }
+    if (isFullscreen.value) {
+      isFullscreen.value = false
+      void nextTick(() => fitView({ padding: 0.12, duration: 200 }))
       return
     }
   }
@@ -590,24 +646,35 @@ const errorCount = computed(() => Object.keys(canvas.blockErrors).length + canva
       </span>
     </div>
 
-    <!-- Canvas toolbar -->
-    <CanvasToolbar
-      v-if="sequenceLoaded"
-      :dirty="dirty"
-      :saving="saving"
-      :minimap-visible="minimapVisible"
-      :sequence-loaded="sequenceLoaded"
-      :valid="canvas.isValid"
-      @add-step="addStepFromToolbar"
-      @fit-view="fitView({ padding: 0.12, duration: 300 })"
-      @auto-layout="runAutoLayout"
-      @toggle-minimap="minimapVisible = !minimapVisible"
-      @save="handleSave"
-      @export-json="handleExport"
-    />
+    <!-- Canvas + toolbar — togglable into an in-app full-screen overlay so the
+         teleported drawer / menus (rendered to body) still paint above it. -->
+    <div
+      :class="isFullscreen
+        ? 'fixed inset-0 z-[90] flex flex-col gap-2 bg-bg p-3'
+        : 'flex min-h-0 flex-1 flex-col'"
+    >
+      <!-- Canvas toolbar -->
+      <CanvasToolbar
+        v-if="sequenceLoaded"
+        :dirty="dirty"
+        :saving="saving"
+        :minimap-visible="minimapVisible"
+        :sequence-loaded="sequenceLoaded"
+        :valid="canvas.isValid"
+        :fullscreen="isFullscreen"
+        :node-title-field="nodeTitleField"
+        @add-step="addStepFromToolbar"
+        @fit-view="fitView({ padding: 0.12, duration: 300 })"
+        @auto-layout="runAutoLayout"
+        @toggle-minimap="minimapVisible = !minimapVisible"
+        @toggle-fullscreen="toggleFullscreen"
+        @toggle-node-title="toggleNodeTitle"
+        @save="handleSave"
+        @export-json="handleExport"
+      />
 
-    <!-- Main canvas area -->
-    <div class="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-bg">
+      <!-- Main canvas area -->
+      <div class="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-bg">
       <div v-if="loadingSequence" class="flex h-full items-center justify-center">
         <div class="flex flex-col items-center gap-3">
           <RefreshCw :size="28" class="animate-spin text-accent" />
@@ -658,6 +725,7 @@ const errorCount = computed(() => Object.keys(canvas.blockErrors).length + canva
           class="!bg-surface !border-border"
         />
       </VueFlow>
+      </div>
     </div>
 
     <!-- Context menu (teleported, fixed at cursor) -->
@@ -708,6 +776,7 @@ const errorCount = computed(() => Object.keys(canvas.blockErrors).length + canva
       :focus-route-index="focusRouteIndex"
       @update-config="panelUpdateConfig"
       @change-type="panelChangeType"
+      @change-id="panelChangeId"
       @delete="panelDelete"
       @reorder="panelReorder"
       @insert-after="panelInsertAfter"

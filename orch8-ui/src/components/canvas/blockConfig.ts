@@ -35,9 +35,18 @@ import {
   XCircle,       // fail
   Cpu,           // embed
 } from 'lucide-vue-next'
-import type { Component } from 'vue'
+import type { Component, InjectionKey, Ref } from 'vue'
 import type { BlockType } from '@/api/types/sequences'
 import type { Json } from '@/api/types/common'
+
+/**
+ * Which field a canvas node shows as its MAIN (primary) title line. Toggled from
+ * the toolbar (see CanvasToolbar / FlowCanvasView) and read by BlockNode via inject.
+ *   'id'    → the block id is the title, the descriptive field is the subtitle
+ *   'label' → swapped: the descriptive field (handler / sequence name / type) leads
+ */
+export type NodeTitleField = 'id' | 'label'
+export const NODE_TITLE_FIELD: InjectionKey<Ref<NodeTitleField>> = Symbol('node-title-field')
 
 export interface BlockVisual {
   icon: Component
@@ -189,21 +198,44 @@ export const STEP_HANDLERS: string[] = [
  * (201 + warning), so these are editor scaffolding, not a hard schema.
  */
 export const HANDLER_PARAM_TEMPLATE: Record<string, Json> = {
-  log: { message: '' },
+  log: { message: '', level: 'info' },
   sleep: { duration_ms: 1000 },
-  http_request: { method: 'GET', url: '', headers: {}, body: null },
-  llm_call: { model: 'claude-opus-4-8', prompt: '', max_tokens: 1024, temperature: 0.7 },
+  // Nested example: headers + query are sub-objects so the full shape is shown.
+  http_request: {
+    method: 'GET',
+    url: 'https://api.example.com/v1/resource',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ${secrets.token}' },
+    query: { page: 1, limit: 20 },
+    body: null,
+    timeout_ms: 30000,
+  },
+  llm_call: {
+    model: 'claude-opus-4-8',
+    prompt: '',
+    system: '',
+    max_tokens: 1024,
+    temperature: 0.7,
+    stop_sequences: [],
+  },
   tool_call: { tool: '', arguments: {} },
   mcp_call: { server: '', tool: '', arguments: {} },
-  agent: { agent: '', input: {} },
-  email_send: { template: '', to: '', data: {} },
+  agent: { agent: '', input: {}, tools: [], max_turns: 8 },
+  email_send: { template: '', to: '', cc: [], data: {} },
   transform: { expression: '' },
   assert: { condition: '', message: '' },
   memory_store: { key: '', value: null, namespace: 'default' },
   memory_search: { query: '', limit: 10, namespace: 'default' },
   blob_put: { key: '', content: '', content_type: 'application/octet-stream' },
   blob_get: { key: '' },
-  human_review: { prompt: '', choices: [] },
+  // Parallel enumeration: every selectable choice is listed side-by-side.
+  human_review: {
+    prompt: '',
+    choices: [
+      { label: 'Approve', value: 'approve' },
+      { label: 'Reject', value: 'reject' },
+    ],
+    allow_comment: true,
+  },
   emit_event: { event: '', payload: {} },
   send_signal: { instance_id: '', signal: '', payload: {} },
   query_instance: { instance_id: '' },
@@ -214,6 +246,40 @@ export const HANDLER_PARAM_TEMPLATE: Record<string, Json> = {
   embed: { input: '', model: '' },
   fail: { message: '', code: '' },
   noop: {},
+}
+
+/**
+ * Complete reference examples for the advanced step JSON sub-objects, mirroring
+ * the Rust→TS interfaces (RetryPolicy / DelaySpec / SendWindow / ContextAccess /
+ * HumanInputDef / EscalationDef) field-for-field, including every nested level
+ * and parallel enumeration (e.g. the full `choices` / `days` arrays). These are
+ * what the editor's per-field "Insert / Copy example" controls expose, so the
+ * complete shape is always available exactly as defined here in source.
+ */
+export const STEP_JSON_FIELD_EXAMPLE: Record<string, Json> = {
+  retry: { max_attempts: 3, initial_backoff: 1, max_backoff: 60, backoff_multiplier: 2 },
+  delay: {
+    duration: 0,
+    business_days_only: false,
+    jitter: 0,
+    holidays: ['2026-12-25'],
+    fire_at_local: '09:00',
+    timezone: 'UTC',
+  },
+  send_window: { start_hour: 9, end_hour: 17, days: [1, 2, 3, 4, 5] },
+  context_access: { data: 'all', config: false, audit: false, runtime: false },
+  wait_for_input: {
+    prompt: 'Approve this step?',
+    timeout: 86400,
+    escalation_handler: '',
+    choices: [
+      { label: 'Approve', value: 'approve' },
+      { label: 'Reject', value: 'reject' },
+    ],
+    store_as: 'decision',
+    allow_comment: true,
+  },
+  on_deadline_breach: { handler: '', params: {} },
 }
 
 /** State → CSS classes for the live-state ring around a node. */

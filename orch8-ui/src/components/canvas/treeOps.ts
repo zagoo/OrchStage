@@ -323,6 +323,15 @@ export function updateBlockConfig(
   return updateBlockById(blocks, id, (b) => ({ ...b, ...safe }) as BlockDefinition)
 }
 
+/**
+ * Rename a block's id in place (identity for every other block). The id is the
+ * one field `updateBlockConfig` refuses to touch, so renaming has its own mutator.
+ * Uniqueness is the caller's responsibility (validateSequence flags duplicates).
+ */
+export function renameBlock(blocks: BlockDefinition[], oldId: string, newId: string): BlockDefinition[] {
+  return updateBlockById(blocks, oldId, (b) => ({ ...b, id: newId }) as BlockDefinition)
+}
+
 /** Swap a block with its previous/next sibling in the same list. No-op at edges. */
 export function reorderSibling(
   blocks: BlockDefinition[],

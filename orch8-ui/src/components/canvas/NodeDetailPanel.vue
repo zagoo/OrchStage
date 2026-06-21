@@ -7,15 +7,25 @@
  * DESIGN_REFERENCE §dag-sequences.md §3, §7 Execution State
  */
 import { computed, ref, watch } from 'vue'
-import { Info, Settings, Activity, Pencil, Trash2, ArrowUp, ArrowDown, Plus, FolderInput } from 'lucide-vue-next'
+import { Info, Settings, Activity, Pencil, Trash2, ArrowUp, ArrowDown, Plus, FolderInput, Check } from 'lucide-vue-next'
 import type { BlockDefinition, BlockType } from '@/api/types/sequences'
 import type { CanvasNodeData } from '@/api/types/canvas'
 import { getContainers, type MoveTarget, type ContainerRef } from '@/components/canvas/treeOps'
-import { BLOCK_VISUAL, stepIcon, stepColorClass, STEP_HANDLERS, HANDLER_PARAM_TEMPLATE } from './blockConfig'
+import {
+  BLOCK_VISUAL,
+  stepIcon,
+  stepColorClass,
+  STEP_HANDLERS,
+  HANDLER_PARAM_TEMPLATE,
+  STEP_JSON_FIELD_EXAMPLE,
+} from './blockConfig'
+import JsonExampleControls from './JsonExampleControls.vue'
 import { titleCase, formatDateTime, prettyJson } from '@/lib/format'
 import Drawer from '@/components/ui/Drawer.vue'
 import Badge from '@/components/ui/Badge.vue'
 import Button from '@/components/ui/Button.vue'
+import IconButton from '@/components/ui/IconButton.vue'
+import CopyButton from '@/components/ui/CopyButton.vue'
 import CodeBlock from '@/components/ui/CodeBlock.vue'
 import KeyValue from '@/components/ui/KeyValue.vue'
 import StatusDot from '@/components/ui/StatusDot.vue'
@@ -38,6 +48,7 @@ const emit = defineEmits<{
   'update:open': [value: boolean]
   'update-config': [patch: Record<string, unknown>]
   'change-type': [type: BlockType]
+  'change-id': [id: string]
   delete: []
   reorder: [dir: 'up' | 'down']
   'insert-after': []
@@ -65,6 +76,32 @@ function onTypeChange(t: string | undefined) {
 
 const block = computed(() => props.nodeData?.block ?? null)
 const execNode = computed(() => props.nodeData?.execNode ?? null)
+
+// Editable Block ID (top of the panel). Edited locally and committed on Enter /
+// the confirm button; the parent (FlowCanvasView.panelChangeId) validates
+// uniqueness, renames in the tree, and keeps the selection + drawer in sync.
+const blockIdDraft = ref('')
+const idChanged = computed(
+  () => !!block.value && blockIdDraft.value.trim() !== '' && blockIdDraft.value.trim() !== block.value.id,
+)
+function commitBlockId() {
+  if (!block.value) return
+  const next = blockIdDraft.value.trim()
+  if (!next || next === block.value.id) return
+  emit('change-id', next)
+}
+
+// Complete JSON example for a field, exactly as defined in source (blockConfig).
+// Params are handler-specific; the advanced step fields use STEP_JSON_FIELD_EXAMPLE.
+function paramsExample(): string {
+  return prettyJson(HANDLER_PARAM_TEMPLATE[form.value.handler] ?? {})
+}
+function fieldExample(key: string): string {
+  return prettyJson(STEP_JSON_FIELD_EXAMPLE[key] ?? {})
+}
+// sub_sequence input is schema-less (it's the called workflow's own input), so a
+// small representative example stands in for a typed shape.
+const subSeqInputExample = prettyJson({ key: 'value' })
 const nodeState = computed(() => props.nodeData?.nodeState ?? null)
 const ownContainers = computed(() => (block.value ? getContainers(block.value) : []))
 /** Scalar fields are only editable for these block types; others edit structure on canvas. */
@@ -162,6 +199,7 @@ function applyTemplateOffer() {
 }
 
 function populate(b: BlockDefinition | null) {
+  blockIdDraft.value = b?.id ?? ''
   jsonErrors.value = {}
   moveSel.value = ''
   routeForm.value = []
@@ -392,7 +430,32 @@ const tabs = [
       <Tabs :tabs="tabs" v-model="activeTab" class="mb-4" />
 
       <div v-show="activeTab === 'config'">
-          <KeyValue label="Block ID" :value="block.id" mono class="mb-3" />
+          <!-- Editable Block ID (must be globally unique). Commit with Enter or the
+               check button; the parent validates uniqueness before renaming. -->
+          <Field label="Block ID" required class="mb-3">
+            <div class="flex items-center gap-1.5">
+              <Input
+                v-model="blockIdDraft"
+                mono
+                class="flex-1"
+                placeholder="unique_block_id"
+                @keyup.enter="commitBlockId"
+              />
+              <IconButton
+                v-if="idChanged"
+                label="Rename block (Enter)"
+                variant="secondary"
+                size="sm"
+                @click="commitBlockId"
+              >
+                <Check :size="15" />
+              </IconButton>
+              <CopyButton :value="block.id" :size="14" />
+            </div>
+            <p v-if="idChanged" class="mt-1 text-[11px] text-subtle">
+              Press Enter or ✓ to rename. IDs must be unique across the workflow.
+            </p>
+          </Field>
 
           <!-- Block-type switcher: pick any type; the editor re-renders that type's fields.
                :key forces a re-sync to the live block.type so a blocked change reverts. -->
@@ -425,6 +488,7 @@ const tabs = [
                 Cancellable
               </label>
               <Field label="Params (JSON)" :error="jsonErrors.params" class="mb-3">
+                <JsonExampleControls :value="paramsExample()" @insert="form.params = paramsExample()" />
                 <Textarea v-model="form.params" :rows="6" class="mono text-[12px]" />
               </Field>
               <!-- Safeguard: a handler change never silently wipes custom Params —
@@ -452,6 +516,7 @@ const tabs = [
               </div>
               <Field label="Cache key" class="mb-2.5"><Input v-model="form.cache_key" placeholder="—" /></Field>
               <Field label="Retry policy (JSON)" :error="jsonErrors.retry" class="mb-2.5">
+                <JsonExampleControls :value="fieldExample('retry')" @insert="form.retry = fieldExample('retry')" />
                 <Textarea
                   v-model="form.retry"
                   :rows="4"
@@ -460,6 +525,7 @@ const tabs = [
                 />
               </Field>
               <Field label="Delay (JSON)" :error="jsonErrors.delay" class="mb-2.5">
+                <JsonExampleControls :value="fieldExample('delay')" @insert="form.delay = fieldExample('delay')" />
                 <Textarea
                   v-model="form.delay"
                   :rows="3"
@@ -468,6 +534,10 @@ const tabs = [
                 />
               </Field>
               <Field label="Send window (JSON)" :error="jsonErrors.send_window" class="mb-2.5">
+                <JsonExampleControls
+                  :value="fieldExample('send_window')"
+                  @insert="form.send_window = fieldExample('send_window')"
+                />
                 <Textarea
                   v-model="form.send_window"
                   :rows="3"
@@ -476,6 +546,10 @@ const tabs = [
                 />
               </Field>
               <Field label="Context access (JSON)" :error="jsonErrors.context_access" class="mb-2.5">
+                <JsonExampleControls
+                  :value="fieldExample('context_access')"
+                  @insert="form.context_access = fieldExample('context_access')"
+                />
                 <Textarea
                   v-model="form.context_access"
                   :rows="3"
@@ -484,6 +558,10 @@ const tabs = [
                 />
               </Field>
               <Field label="Wait for input (JSON)" :error="jsonErrors.wait_for_input" class="mb-2.5">
+                <JsonExampleControls
+                  :value="fieldExample('wait_for_input')"
+                  @insert="form.wait_for_input = fieldExample('wait_for_input')"
+                />
                 <Textarea
                   v-model="form.wait_for_input"
                   :rows="4"
@@ -492,6 +570,10 @@ const tabs = [
                 />
               </Field>
               <Field label="On deadline breach (JSON)" :error="jsonErrors.on_deadline_breach" class="mb-3">
+                <JsonExampleControls
+                  :value="fieldExample('on_deadline_breach')"
+                  @insert="form.on_deadline_breach = fieldExample('on_deadline_breach')"
+                />
                 <Textarea
                   v-model="form.on_deadline_breach"
                   :rows="3"
@@ -505,6 +587,7 @@ const tabs = [
               <Field label="Sequence name" required class="mb-2.5"><Input v-model="form.sequence_name" /></Field>
               <Field label="Version" class="mb-2.5"><Input v-model="form.version" type="number" placeholder="latest" /></Field>
               <Field label="Input (JSON)" :error="jsonErrors.input" class="mb-3">
+                <JsonExampleControls :value="subSeqInputExample" @insert="form.input = subSeqInputExample" />
                 <Textarea v-model="form.input" :rows="5" class="mono text-[12px]" />
               </Field>
             </template>

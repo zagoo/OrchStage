@@ -20,6 +20,7 @@ import {
   listInstancesForSequence,
   fetchExecutionTree,
   saveSequenceVersion,
+  persistSequenceEdit,
   exportSequenceAsJson,
 } from './canvas'
 import type { SequenceDefinition } from './types/sequences'
@@ -293,5 +294,92 @@ describe('exportSequenceAsJson', () => {
 
     createElement.mockRestore()
     vi.unstubAllGlobals()
+  })
+})
+
+// --- persistSequenceEdit (status-aware Save) ---------------------------------
+// Mirrors the live server contract: POST keys on `sequences.id`, so reusing an id
+// → 409; there is no PUT/upsert. Overwrite = DELETE then re-POST same id+version;
+// production forks a NEW version with a FRESH id.
+
+describe('persistSequenceEdit', () => {
+  function seqResponse(status: number, body: unknown) {
+    return {
+      ok: status < 400,
+      status,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      text: () => Promise.resolve(status === 204 ? '' : JSON.stringify(body)),
+      json: () => Promise.resolve(body),
+    }
+  }
+  function mockFetchSeq(...responses: Array<{ status: number; body?: unknown }>) {
+    const fn = vi.fn()
+    for (const r of responses) fn.mockResolvedValueOnce(seqResponse(r.status, r.body))
+    return fn
+  }
+
+  it('OVERWRITES a draft in place: DELETE then POST at the SAME id + version', async () => {
+    const def = makeSeqDef({ status: 'draft', version: 3, id: 'keep-me' })
+    const fetchMock = mockFetchSeq({ status: 204 }, { status: 201, body: { id: 'keep-me' } })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await persistSequenceEdit(def, def)
+
+    expect(res.mode).toBe('overwrite')
+    expect(res.saved.version).toBe(3) // version NOT bumped
+
+    const calls = fetchMock.mock.calls as Array<[string, RequestInit]>
+    expect(calls).toHaveLength(2)
+    expect(calls[0][0]).toContain('/api/v1/sequences/keep-me')
+    expect((calls[0][1].method as string).toUpperCase()).toBe('DELETE')
+    expect((calls[1][1].method as string).toUpperCase()).toBe('POST')
+    const sent = JSON.parse(calls[1][1].body as string) as Record<string, unknown>
+    expect(sent.id).toBe('keep-me')
+    expect(sent.version).toBe(3)
+  })
+
+  it.each(['staging', 'unpublished'] as const)('overwrites a %s sequence in place too', async (status) => {
+    const def = makeSeqDef({ status, version: 1, id: 'x' })
+    vi.stubGlobal('fetch', mockFetchSeq({ status: 204 }, { status: 201, body: { id: 'x' } }))
+    const res = await persistSequenceEdit(def, def)
+    expect(res.mode).toBe('overwrite')
+  })
+
+  it('FORKS production: a single POST with a FRESH id + version+1 (no DELETE, original preserved)', async () => {
+    const def = makeSeqDef({ status: 'production', version: 5, id: 'prod-original' })
+    const fetchMock = mockFetchSeq({ status: 201, body: { id: 'server-echo' } })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await persistSequenceEdit(def, def)
+
+    expect(res.mode).toBe('new-version')
+    expect(res.saved.version).toBe(6)
+    const calls = fetchMock.mock.calls as Array<[string, RequestInit]>
+    expect(calls).toHaveLength(1) // production NEVER overwrites → no DELETE
+    expect((calls[0][1].method as string).toUpperCase()).toBe('POST')
+    const sent = JSON.parse(calls[0][1].body as string) as Record<string, unknown>
+    expect(sent.version).toBe(6)
+    expect(sent.id).not.toBe('prod-original') // fresh uuid avoids the 409 PK conflict
+    expect(typeof sent.id).toBe('string')
+  })
+
+  it('restores the original when an overwrite re-create fails (no data loss)', async () => {
+    const original = makeSeqDef({ status: 'draft', version: 2, id: 'y' })
+    const edited = { ...original, blocks: [...original.blocks] }
+    const fetchMock = mockFetchSeq(
+      { status: 204 }, // DELETE old row
+      { status: 500, body: { error: 'boom' } }, // re-create fails
+      { status: 201, body: { id: 'y' } }, // restore original
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(persistSequenceEdit(edited, original)).rejects.toMatchObject({ status: 500 })
+
+    const calls = fetchMock.mock.calls as Array<[string, RequestInit]>
+    expect(calls).toHaveLength(3) // DELETE, failed POST, restore POST
+    expect((calls[2][1].method as string).toUpperCase()).toBe('POST')
+    const restored = JSON.parse(calls[2][1].body as string) as Record<string, unknown>
+    expect(restored.id).toBe('y') // the original is put back
+    expect(restored.version).toBe(2)
   })
 })

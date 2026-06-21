@@ -20,6 +20,7 @@ import {
   moveBlock,
   updateBlockConfig,
   updateBlockById,
+  renameBlock,
   mapContainers,
   makeStep,
   makeBlockOfType,
@@ -154,6 +155,36 @@ export const useCanvasStore = defineStore('canvas', () => {
     applyBlocks(updateBlockById(blocks, id, () => replacement))
   }
 
+  /**
+   * Rename a block's id (e.g. the editable Block ID field). Uniqueness is
+   * pre-checked by the caller; applyBlocks still re-validates so a slipped-through
+   * duplicate surfaces as a blockError rather than corrupting the tree.
+   */
+  function changeBlockId(oldId: string, newId: string) {
+    if (!editable.value) return
+    const trimmed = newId.trim()
+    if (!trimmed || trimmed === oldId) return
+    applyBlocks(renameBlock(editable.value.definition.blocks, oldId, trimmed))
+  }
+
+  /**
+   * Adopt a just-persisted definition as the new clean baseline after a Save. The
+   * server may have assigned a fresh id + version (production fork) or kept them
+   * (in-place overwrite), so re-seat both loadedSequence and the editable model on
+   * exactly what now lives on the server and clear `dirty`.
+   */
+  function commitSaved(def: SequenceDefinition) {
+    loadedSequence.value = def
+    selectedSequenceId.value = def.id
+    const v = validateSequence(def.blocks)
+    editable.value = {
+      definition: JSON.parse(JSON.stringify(def)) as SequenceDefinition,
+      dirty: false,
+      blockErrors: v.blockErrors,
+    }
+    validationErrors.value = v.errors
+  }
+
   // --- Backwards-compatible helpers -------------------------------------------
 
   function markDirty() {
@@ -204,6 +235,8 @@ export const useCanvasStore = defineStore('canvas', () => {
     move,
     updateConfig,
     changeBlockType,
+    changeBlockId,
+    commitSaved,
     markDirty,
     updateEditableBlocks,
     resetDirty,

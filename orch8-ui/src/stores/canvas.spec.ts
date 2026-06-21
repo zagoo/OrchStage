@@ -277,6 +277,31 @@ describe('useCanvasStore', () => {
       expect(store.isDirty).toBe(false)
     })
 
+    // --- changeBlockId (editable Block ID) ---
+
+    it('changeBlockId renames a block, marks dirty, and stays valid', () => {
+      const store = loadWith('a', 'b')
+      store.changeBlockId('a', 'a_renamed')
+      expect(store.blocks.map((x) => x.id)).toEqual(['a_renamed', 'b'])
+      expect(store.isDirty).toBe(true)
+      expect(store.isValid).toBe(true)
+    })
+
+    it('changeBlockId is a no-op for an empty or unchanged id', () => {
+      const store = loadWith('a')
+      store.changeBlockId('a', 'a')
+      store.changeBlockId('a', '   ')
+      expect(store.isDirty).toBe(false)
+      expect(store.blocks[0].id).toBe('a')
+    })
+
+    it('changeBlockId to a colliding id is guarded by re-validation (duplicate blockError)', () => {
+      const store = loadWith('a', 'b')
+      store.changeBlockId('a', 'b') // would duplicate sibling 'b'
+      expect(store.isValid).toBe(false)
+      expect(store.blockErrors['b']).toMatch(/Duplicate/)
+    })
+
     // --- Conversion edge cases: old subtree must be strictly wiped (no orphans) ---
 
     it('converting a composite with nested children to step wipes ALL descendants', () => {
@@ -386,6 +411,39 @@ describe('useCanvasStore', () => {
       const store = useCanvasStore()
       expect(() => store.addStep(null)).not.toThrow()
       expect(store.blocks).toEqual([])
+    })
+  })
+
+  describe('commitSaved() — adopt a just-persisted definition as the clean baseline', () => {
+    const realStep = (id: string): BlockDefinition =>
+      ({ type: 'step', id, handler: 'log', params: {}, cancellable: false }) as BlockDefinition
+
+    it('re-seats loaded + editable on a forked (new id + version) definition and clears dirty', () => {
+      const store = useCanvasStore()
+      const seq = makeSeq('old-id')
+      seq.blocks = [realStep('a')]
+      store.loadSequence(seq)
+      store.addStep('a') // dirty
+      expect(store.isDirty).toBe(true)
+
+      const saved = { ...seq, id: 'new-id', version: 2, blocks: [...store.blocks] } as SequenceDefinition
+      store.commitSaved(saved)
+
+      expect(store.isDirty).toBe(false)
+      expect(store.loadedSequence!.id).toBe('new-id')
+      expect(store.selectedSequenceId).toBe('new-id')
+      expect(store.editable!.definition.id).toBe('new-id')
+      expect(store.editable!.definition.version).toBe(2)
+    })
+
+    it('editable becomes a deep copy of the saved def (mutating saved does not leak in)', () => {
+      const store = useCanvasStore()
+      store.loadSequence(makeSeq('s1'))
+      const saved = makeSeq('s1')
+      saved.blocks = [realStep('a')]
+      store.commitSaved(saved)
+      saved.blocks.push(realStep('b'))
+      expect(store.editable!.definition.blocks).toHaveLength(1)
     })
   })
 })

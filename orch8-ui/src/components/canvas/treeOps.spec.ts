@@ -31,6 +31,7 @@ import {
   insertStep,
   deleteBlock,
   updateBlockConfig,
+  renameBlock,
   reorderSibling,
   moveBlock,
   makeBlockOfType,
@@ -382,5 +383,27 @@ describe('makeBlockOfType', () => {
     expect((makeBlockOfType('try_catch', 't', makeStep('seed_1')) as TryCatchBlock).try_block[0].id).toBe('seed_1')
     // router may be empty — no seed child is consumed
     expect((makeBlockOfType('router', 'r', makeStep('seed_1')) as RouterBlock).routes[0].blocks).toEqual([])
+  })
+})
+
+// --- renameBlock (editable Block ID) -----------------------------------------
+describe('renameBlock', () => {
+  it('renames a root block in place, leaving every other field intact', () => {
+    const out = renameBlock([step('a', 'http'), step('b')], 'a', 'a2')
+    expect(out.map((b) => b.id)).toEqual(['a2', 'b'])
+    expect((out[0] as StepBlock).handler).toBe('http') // only the id changed
+  })
+
+  it('renames a deeply-nested block without touching siblings', () => {
+    const tree = [parallel('par', [step('p0a'), step('p0b')], [step('p1a')])]
+    const out = renameBlock(tree, 'p0b', 'renamed')
+    expect(collectIds(out).sort()).toEqual(['par', 'p0a', 'p1a', 'renamed'].sort())
+    expect(findBlock(out, 'p0b')).toBeNull()
+    expect(findBlock(out, 'renamed')).not.toBeNull()
+  })
+
+  it('is identity when the id is not found', () => {
+    const tree = [step('a')]
+    expect(renameBlock(tree, 'nope', 'x')).toEqual(tree)
   })
 })

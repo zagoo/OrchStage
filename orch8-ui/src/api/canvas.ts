@@ -19,8 +19,10 @@ import {
   getSequence,
   listSequenceVersions,
   createSequence,
+  deleteSequence,
 } from '@/api/sequences'
 import { listInstances, getExecutionTree } from '@/api/instances'
+import { genUuid } from '@/lib/uuid'
 import type { SequenceDefinition, CreateSequenceRequest, ListSequencesQuery } from '@/api/types/sequences'
 import type { ExecutionNode, ListInstancesQuery, TaskInstance } from '@/api/types/instances'
 
@@ -30,6 +32,7 @@ export {
   getSequence,
   listSequenceVersions,
   createSequence,
+  deleteSequence,
   listInstances,
   getExecutionTree,
 }
@@ -78,6 +81,55 @@ export function saveSequenceVersion(
   signal?: AbortSignal,
 ) {
   return createSequence(body, signal)
+}
+
+/** How a Save was persisted, derived from the sequence's current status. */
+export type SaveMode = 'overwrite' | 'new-version'
+
+export interface PersistResult {
+  mode: SaveMode
+  /** Exactly what now lives on the server (id + version reflect the chosen mode). */
+  saved: SequenceDefinition
+  warnings?: string[]
+}
+
+/**
+ * Persist canvas edits, choosing HOW from the sequence's status:
+ *
+ *  - production → FORK a new version. The server's primary key is `sequences.id`,
+ *    so the new row MUST get a FRESH id — reusing it returns 409 "UNIQUE
+ *    constraint failed: sequences.id" (the reported production-save bug). The live
+ *    production version is left intact.
+ *  - draft | staging | unpublished → OVERWRITE in place at the SAME id + version.
+ *    The server exposes no PUT/upsert, so overwrite = DELETE the row then re-create
+ *    it. On a failed re-create we restore `original` so a transient error never
+ *    strands the user with a deleted sequence.
+ *
+ * Verified against the live server (DESIGN_REFERENCE §dag-sequences.md §9.1).
+ */
+export async function persistSequenceEdit(
+  edited: SequenceDefinition,
+  original: SequenceDefinition,
+  signal?: AbortSignal,
+): Promise<PersistResult> {
+  const now = new Date().toISOString()
+
+  if (edited.status === 'production') {
+    const saved: SequenceDefinition = { ...edited, id: genUuid(), version: edited.version + 1, created_at: now }
+    const res = await createSequence(saved, signal)
+    return { mode: 'new-version', saved: { ...saved, id: res.id }, warnings: res.warnings }
+  }
+
+  const saved: SequenceDefinition = { ...edited, created_at: now }
+  await deleteSequence(edited.id, signal)
+  try {
+    const res = await createSequence(saved, signal)
+    return { mode: 'overwrite', saved: { ...saved, id: res.id }, warnings: res.warnings }
+  } catch (e) {
+    // Best-effort restore so a failed overwrite never loses the sequence.
+    await createSequence(original, signal).catch(() => {})
+    throw e
+  }
 }
 
 /**

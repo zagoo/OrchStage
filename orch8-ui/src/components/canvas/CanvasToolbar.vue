@@ -1,15 +1,30 @@
 <script setup lang="ts">
 /**
  * Toolbar above the Vue Flow canvas.
- * Controls: add step, fit view, auto-layout, toggle minimap, save, export JSON.
+ * Controls: add step, fit view, auto-layout, toggle minimap, full screen,
+ * toggle node title field, save, export JSON.
  * Save is gated on a valid block tree (see validateSequence).
  *
  * DESIGN_REFERENCE §dag-sequences.md §9.1 Create Sequence (save)
  */
-import { Maximize2, LayoutDashboard, Map, Save, Download, Loader2, AlertCircle, CheckCircle2, Plus } from 'lucide-vue-next'
+import {
+  Maximize2,
+  LayoutDashboard,
+  Map,
+  Expand,
+  Shrink,
+  Type,
+  Save,
+  Download,
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
+  Plus,
+} from 'lucide-vue-next'
 import Button from '@/components/ui/Button.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import Badge from '@/components/ui/Badge.vue'
+import type { NodeTitleField } from './blockConfig'
 
 defineProps<{
   dirty: boolean
@@ -17,6 +32,8 @@ defineProps<{
   minimapVisible: boolean
   sequenceLoaded: boolean
   valid: boolean
+  fullscreen: boolean
+  nodeTitleField: NodeTitleField
 }>()
 
 const emit = defineEmits<{
@@ -24,6 +41,8 @@ const emit = defineEmits<{
   fitView: []
   autoLayout: []
   toggleMinimap: []
+  toggleFullscreen: []
+  toggleNodeTitle: []
   save: []
   exportJson: []
 }>()
@@ -52,6 +71,22 @@ const emit = defineEmits<{
       :class="minimapVisible ? 'bg-accent-soft text-accent' : ''"
     >
       <Map :size="15" />
+    </IconButton>
+    <IconButton
+      :label="nodeTitleField === 'id' ? 'Node titles: IDs (click to show names)' : 'Node titles: names (click to show IDs)'"
+      @click="emit('toggleNodeTitle')"
+      :class="nodeTitleField === 'label' ? 'bg-accent-soft text-accent' : ''"
+    >
+      <Type :size="15" />
+    </IconButton>
+    <IconButton
+      :label="fullscreen ? 'Exit full screen' : 'Full screen'"
+      @click="emit('toggleFullscreen')"
+      :disabled="!sequenceLoaded"
+      :class="fullscreen ? 'bg-accent-soft text-accent' : ''"
+    >
+      <Shrink v-if="fullscreen" :size="15" />
+      <Expand v-else :size="15" />
     </IconButton>
 
     <div class="mx-1 h-5 w-px bg-border" aria-hidden="true" />

@@ -251,4 +251,37 @@ describe('NodeDetailPanel', () => {
       { name: 'B', weight: 40, blocks: [] },
     ])
   })
+
+  // --- Editable Block ID (Bug 3) ---
+
+  it('Block ID is editable — Enter emits change-id with the trimmed value', async () => {
+    const wrapper = mountPanel()
+    const idInput = wrapper.find('input[placeholder="unique_block_id"]')
+    expect(idInput.exists()).toBe(true)
+    await idInput.setValue('  s1_renamed  ')
+    await idInput.trigger('keyup', { key: 'Enter' })
+    const ev = wrapper.emitted('change-id')
+    expect(ev).toBeTruthy()
+    expect(ev![0]).toEqual(['s1_renamed'])
+  })
+
+  it('Block ID commit is suppressed when the id is unchanged', async () => {
+    const wrapper = mountPanel()
+    const idInput = wrapper.find('input[placeholder="unique_block_id"]')
+    await idInput.setValue('s1') // same as the block id
+    await idInput.trigger('keyup', { key: 'Enter' })
+    expect(wrapper.emitted('change-id')).toBeFalsy()
+  })
+
+  // --- Complete JSON example controls (Bug 1) ---
+
+  it('"Insert" drops the complete handler template into the Params field', async () => {
+    const wrapper = mountPanel(stepNodeEmptyParams())
+    const insert = wrapper.findAll('button').find((b) => b.text().trim() === 'Insert')
+    expect(insert, 'an Insert example button should render on JSON fields').toBeTruthy()
+    await insert!.trigger('click')
+    const params = wrapper.find('textarea').element.value
+    expect(params).toContain('"message"')
+    expect(params).toContain('"level"')
+  })
 })
