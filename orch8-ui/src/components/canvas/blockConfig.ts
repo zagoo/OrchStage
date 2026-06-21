@@ -253,148 +253,275 @@ export function handlerDescription(handler: string): string | undefined {
 }
 
 /**
- * Standard starter `params` template per handler. Selecting a handler in the
- * editor fills the Params JSON with the matching shape. Each template mirrors
- * the engine handler's actual param contract field-for-field (param NAMES, enum
- * values, nested shapes) — see orch8-engine/src/handlers/*. Required params that
- * have no safe generic default are left blank ('') so the editor's required-param
- * validation (see HANDLER_PARAM_REQUIREMENTS) prompts the operator to fill them.
+ * SINGLE SOURCE OF TRUTH for handler parameters. One `HandlerParamDef` per param a
+ * handler reads — EVERY param (required AND optional), derived field-for-field from
+ * the engine handler source (orch8-engine/src/handlers/*). The starter template, the
+ * complete in-editor parameter reference, the required-param check, and the value
+ * validation ALL derive from this one list, so they cannot drift apart. When the
+ * engine adds/changes a param, edit THIS list and everything follows.
+ *
+ * Flags:
+ *  - `required`        : must be present and non-blank ('' / null = missing).
+ *  - `requiredPresent` : the KEY must exist; any value (incl. null/'') is fine
+ *                        (e.g. set_state.value, merge_state.values).
+ *  - `oneOf`           : group id — at least ONE member of the group must be present
+ *                        and non-blank (e.g. memory_store needs `text` OR `embedding`).
+ *  - `enumValues`      : allowed string values. Validated unless `enumOpen` (advisory,
+ *                        e.g. llm_call.provider falls back to openai). `allowObjectEnum`
+ *                        also accepts an object value (send_signal.signal_type custom).
+ *  - `min`/`max`       : integer bounds (validated). `url` : must be http(s) (validated).
+ *  - `example`         : value placed in the prefill template. Omit to keep a param
+ *                        OUT of the starter template but STILL listed in the reference
+ *                        (used for advanced/provider-specific params). `name` may be a
+ *                        nested path ('tool_dispatch.type') or array-item path
+ *                        ('messages[].role') for reference + validation only.
  */
-export const HANDLER_PARAM_TEMPLATE: Record<string, Json> = {
-  // Reads no params.
-  noop: {},
-  // `message` echoed to the instance log; `level` ∈ debug|info|warn (others → info).
-  log: { message: '', level: 'info' },
-  sleep: { duration_ms: 1000 },
-  // `retryable` true → step is retried; false → permanent failure.
-  fail: { message: 'forced failure', retryable: false },
-  // `url` REQUIRED (http/https, SSRF-guarded). `method` ∈ GET|POST|PUT|PATCH|DELETE.
-  // `body` is a STRING (sent only when non-empty, as application/json). There is no
-  // `query` param — put query-string params directly in the url.
-  http_request: {
-    url: 'https://api.example.com/v1/resource',
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer <token>' },
-    body: '',
-    timeout_ms: 10000,
-  },
-  // The prompt is the `messages` array (role ∈ system|user|assistant|tool). `provider`
-  // ∈ openai|anthropic|gemini|deepseek|qwen|perplexity|groq|together|mistral|openrouter.
-  llm_call: {
-    provider: 'openai',
-    model: 'gpt-4o',
-    messages: [{ role: 'user', content: '' }],
-    system: '',
-    temperature: 0.7,
-    max_tokens: 4096,
-  },
-  // `url` REQUIRED (tool endpoint, SSRF-guarded). `method` defaults to POST.
-  tool_call: { url: '', tool_name: '', arguments: {}, method: 'POST', headers: {}, timeout_ms: 30000 },
-  // Endpoint is `url` OR `server`; `tool_name` REQUIRED when action='call'. action ∈ call|list.
-  mcp_call: { url: '', action: 'call', tool_name: '', arguments: {}, headers: {}, timeout_ms: 30000 },
-  // `goal` (or a `messages` array) drives the loop; `tool_dispatch.url` is required once
-  // tools are used. tool_dispatch.type ∈ http|mcp.
-  agent: {
-    goal: '',
-    system: '',
-    model: '',
-    max_iterations: 6,
-    tools: [],
-    tool_dispatch: { type: 'http', url: '' },
-  },
-  // Convenience handler — NOT an engine builtin; the server forwards it leniently.
-  email_send: { template: '', to: '', cc: [], data: {} },
-  // Pass-through: the resolved params object is returned verbatim (use ${...} refs).
-  transform: {},
-  assert: { condition: '', message: 'assertion failed' },
-  // one-of: `text` (embedded for you) OR a precomputed `embedding`. `key` defaults to a content hash.
-  memory_store: { text: '', key: '', metadata: {} },
-  // one-of: `query` (embedded for you) OR a precomputed `query_embedding`.
-  memory_search: { query: '', top_k: 5 },
-  // one-of: `text` (utf-8) OR `data` (base64).
-  blob_put: { text: '', content_type: 'text/plain; charset=utf-8' },
-  // `ref` REQUIRED — a stored artifact key (string), or { key } / { artifact: { key } }.
-  // `encoding` ∈ base64|utf8.
-  blob_get: { ref: '', encoding: 'base64' },
-  // Review choices come from the step's `wait_for_input`, NOT from params.
-  human_review: { instructions: '', reviewer: 'unassigned', review_data: null },
-  // `trigger_slug` REQUIRED (the child sequence's trigger). dedupe_scope ∈ parent|tenant.
-  emit_event: { trigger_slug: '', data: {} },
-  // `signal_type` ∈ pause|resume|cancel|update_context, or { custom: 'name' }.
-  send_signal: { instance_id: '', signal_type: 'cancel', payload: {} },
-  query_instance: { instance_id: '' },
-  // `key` REQUIRED; `value` REQUIRED (any JSON value, including null).
-  set_state: { key: '', value: '' },
-  get_state: { key: '' },
-  delete_state: { key: '' },
-  // `values` REQUIRED — an object merged into this instance's state.
-  merge_state: { values: {} },
-  embed: { input: '', model: 'text-embedding-3-small' },
+export type HandlerParamType = 'string' | 'integer' | 'number' | 'boolean' | 'object' | 'array' | 'any'
+
+export interface HandlerParamDef {
+  name: string
+  type: HandlerParamType
+  desc: string
+  required?: boolean
+  requiredPresent?: boolean
+  oneOf?: string
+  enumValues?: readonly string[]
+  enumOpen?: boolean
+  allowObjectEnum?: boolean
+  min?: number
+  max?: number
+  url?: boolean
+  default?: Json
+  example?: Json
+}
+
+const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const
+const LLM_PROVIDERS = ['openai', 'anthropic', 'gemini', 'deepseek', 'qwen', 'perplexity', 'groq', 'together', 'mistral', 'openrouter'] as const
+const MESSAGE_ROLES = ['system', 'user', 'assistant', 'tool'] as const
+
+export const HANDLER_PARAM_SPEC: Record<string, HandlerParamDef[]> = {
+  noop: [],
+  log: [
+    { name: 'message', type: 'any', default: 'no message', example: '', desc: 'Message echoed to the instance log (any JSON value; absent → "no message").' },
+    { name: 'level', type: 'string', enumValues: ['debug', 'info', 'warn'], default: 'info', example: 'info', desc: 'Log level; any other value logs at info.' },
+  ],
+  sleep: [{ name: 'duration_ms', type: 'integer', min: 0, default: 100, example: 1000, desc: 'Pause duration in milliseconds (non-negative integer).' }],
+  fail: [
+    { name: 'message', type: 'string', default: 'forced failure', example: 'forced failure', desc: 'Error message text.' },
+    { name: 'retryable', type: 'boolean', default: false, example: false, desc: 'true → retried; false → permanent failure (DLQ).' },
+  ],
+  http_request: [
+    { name: 'url', type: 'string', required: true, url: true, example: 'https://api.example.com/v1/resource', desc: 'Endpoint URL — http(s), public host (SSRF-guarded).' },
+    { name: 'method', type: 'string', enumValues: HTTP_METHODS, default: 'GET', example: 'GET', desc: 'HTTP method (unrecognized → GET).' },
+    { name: 'headers', type: 'object', default: {}, example: { 'Content-Type': 'application/json', Authorization: 'Bearer <token>' }, desc: 'Request headers (string values only; Host is rejected).' },
+    { name: 'body', type: 'string', default: '', example: '', desc: 'Request body STRING (sent only when non-empty, as application/json).' },
+    { name: 'timeout_ms', type: 'integer', min: 0, default: 10000, example: 10000, desc: 'Request timeout in milliseconds.' },
+  ],
+  llm_call: [
+    { name: 'provider', type: 'string', enumValues: LLM_PROVIDERS, enumOpen: true, default: 'openai', example: 'openai', desc: 'API format preset; unknown values fall back to openai (use base_url for custom).' },
+    { name: 'model', type: 'string', example: 'gpt-4o', desc: 'Model id (provider/env default if omitted).' },
+    { name: 'messages', type: 'array', default: [], example: [{ role: 'user', content: '' }], desc: 'Chat turns [{role, content}]; content is a string or content-block array.' },
+    { name: 'messages[].role', type: 'string', enumValues: MESSAGE_ROLES, desc: 'Role of each message.' },
+    { name: 'system', type: 'string', example: '', desc: 'System-prompt shorthand.' },
+    { name: 'temperature', type: 'number', example: 0.7, desc: 'Sampling temperature (provider default if omitted).' },
+    { name: 'max_tokens', type: 'integer', min: 1, default: 4096, example: 4096, desc: 'Max output tokens (Anthropic requires it; defaults 4096).' },
+    { name: 'base_url', type: 'string', desc: 'Override the provider API base URL.' },
+    { name: 'api_key', type: 'string', desc: 'API key (one-of api_key / api_key_env / provider env var).' },
+    { name: 'api_key_env', type: 'string', desc: 'Env var name holding the API key (engine/secret names blocked).' },
+    { name: 'top_p', type: 'number', desc: 'Nucleus sampling (both formats).' },
+    { name: 'top_k', type: 'integer', desc: 'Top-k sampling (Anthropic only).' },
+    { name: 'frequency_penalty', type: 'number', desc: 'OpenAI-compatible only.' },
+    { name: 'presence_penalty', type: 'number', desc: 'OpenAI-compatible only.' },
+    { name: 'stop', type: 'array', desc: 'Stop sequences string|array (OpenAI-compatible only).' },
+    { name: 'stop_sequences', type: 'array', desc: 'Stop sequences (Anthropic only).' },
+    { name: 'seed', type: 'integer', desc: 'Deterministic seed (OpenAI-compatible only).' },
+    { name: 'n', type: 'integer', desc: 'Number of completions (OpenAI-compatible only).' },
+    { name: 'metadata', type: 'object', desc: 'Passed through verbatim (Anthropic only).' },
+    { name: 'tools', type: 'array', desc: "Tool/function defs in the provider's native schema." },
+    { name: 'tool_choice', type: 'any', desc: 'Tool-selection strategy (provider-native).' },
+    { name: 'response_format', type: 'object', desc: 'e.g. {"type":"json_object"} (OpenAI-compatible only).' },
+    { name: 'response_schema', type: 'object', desc: 'JSON Schema; response is extracted, validated and repaired.' },
+    { name: 'max_repair_attempts', type: 'integer', min: 0, max: 5, default: 2, desc: 'Schema-repair re-calls (capped at 5).' },
+    { name: 'max_image_bytes', type: 'integer', min: 1, default: 20971520, desc: 'Per-image size cap, ≤ 20 MiB.' },
+    { name: 'stream', type: 'boolean', default: false, desc: 'Consume the SSE stream (ignored when response_schema set).' },
+    { name: 'stream_idle_timeout_secs', type: 'integer', min: 0, default: 30, desc: 'Max gap between streamed chunks.' },
+    { name: 'total_timeout_secs', type: 'integer', min: 0, default: 120, desc: 'Cumulative failover timeout (0 disables).' },
+    { name: 'per_provider_timeout_secs', type: 'integer', min: 0, default: 60, desc: 'Per-provider failover timeout (0 disables).' },
+    { name: 'providers', type: 'array', desc: 'Failover list; each entry overlays the top-level params.' },
+  ],
+  tool_call: [
+    { name: 'url', type: 'string', required: true, url: true, example: '', desc: 'Tool endpoint URL — http(s), SSRF-guarded.' },
+    { name: 'tool_name', type: 'string', default: 'unknown', example: '', desc: 'Tool name echoed into the request envelope and output.' },
+    { name: 'arguments', type: 'object', default: {}, example: {}, desc: 'Tool arguments placed in the default JSON envelope.' },
+    { name: 'method', type: 'string', enumValues: ['GET', 'POST', 'PUT', 'PATCH'], default: 'POST', example: 'POST', desc: 'HTTP method (unrecognized → POST; no DELETE).' },
+    { name: 'headers', type: 'object', default: {}, example: {}, desc: 'Extra headers (string values; forbidden names dropped).' },
+    { name: 'timeout_ms', type: 'integer', min: 0, default: 30000, example: 30000, desc: 'Per-request timeout in milliseconds.' },
+    { name: 'response_as', type: 'string', enumValues: ['artifact'], desc: 'Set "artifact" to store a 2xx/3xx body as a durable artifact.' },
+    { name: 'body_artifact', type: 'object', desc: 'Artifact ref whose bytes become the request body ({key, content_type?}).' },
+    { name: 'upload', type: 'object', desc: 'Upload mode {mode:"multipart", field?, filename?} (needs body_artifact).' },
+  ],
+  mcp_call: [
+    { name: 'url', type: 'string', oneOf: 'endpoint', url: true, example: '', desc: 'MCP endpoint URL — http(s) (one-of url / server; url wins).' },
+    { name: 'server', type: 'string', oneOf: 'endpoint', desc: 'Named server from context.config.mcp_servers (alternative to url).' },
+    { name: 'action', type: 'string', enumValues: ['call', 'list'], default: 'call', example: 'call', desc: '"call" invokes a tool; "list" discovers tools.' },
+    { name: 'tool_name', type: 'string', example: '', desc: 'Tool to invoke — required when action="call".' },
+    { name: 'arguments', type: 'object', default: {}, example: {}, desc: 'Tool arguments (action="call").' },
+    { name: 'headers', type: 'object', default: {}, example: {}, desc: 'Extra headers merged over server headers (string values only).' },
+    { name: 'timeout_ms', type: 'integer', min: 0, default: 30000, example: 30000, desc: 'Per-request timeout in milliseconds.' },
+    { name: 'protocol_version', type: 'string', default: '2025-06-18', example: '2025-06-18', desc: 'MCP protocol version advertised on initialize.' },
+  ],
+  agent: [
+    // goal / messages are both optional (an empty conversation is allowed) — use one.
+    { name: 'goal', type: 'string', example: '', desc: 'Single-turn task; the conversation seed (use this or messages).' },
+    { name: 'messages', type: 'array', desc: 'Conversation seed [{role, content}] (overrides goal when non-empty).' },
+    { name: 'system', type: 'string', example: '', desc: 'System prompt forwarded to each llm_call.' },
+    { name: 'model', type: 'string', example: '', desc: 'Model id forwarded to llm_call.' },
+    { name: 'max_iterations', type: 'integer', min: 1, max: 50, default: 6, example: 6, desc: 'Reason→act cycle cap (clamped to 1–50).' },
+    { name: 'tools', type: 'array', default: [], example: [], desc: 'OpenAI tool schema; auto-discovered via MCP when omitted and dispatch type=mcp.' },
+    { name: 'tool_dispatch', type: 'object', example: { type: 'http', url: '' }, desc: 'How tool calls execute: {type, url, server?, headers?}.' },
+    { name: 'tool_dispatch.type', type: 'string', enumValues: ['http', 'mcp'], default: 'http', desc: 'Dispatch transport.' },
+    { name: 'tool_dispatch.url', type: 'string', url: true, desc: 'Tool/MCP endpoint (required once a tool is dispatched).' },
+    { name: 'auto_memory', type: 'object', desc: 'Recall-before / store-after: {recall_k, store_outcome, model, api_key|api_key_env, base_url}.' },
+    { name: 'provider', type: 'string', enumValues: LLM_PROVIDERS, enumOpen: true, desc: 'Forwarded to llm_call.' },
+    { name: 'providers', type: 'array', desc: 'Failover list forwarded to llm_call.' },
+    { name: 'api_key', type: 'string', desc: 'Forwarded to llm_call.' },
+    { name: 'api_key_env', type: 'string', desc: 'Forwarded to llm_call.' },
+    { name: 'base_url', type: 'string', desc: 'Forwarded to llm_call.' },
+    { name: 'temperature', type: 'number', desc: 'Forwarded to llm_call.' },
+    { name: 'max_tokens', type: 'integer', min: 1, desc: 'Forwarded to llm_call.' },
+    { name: 'total_timeout_secs', type: 'integer', min: 0, desc: 'Forwarded to llm_call.' },
+    { name: 'per_provider_timeout_secs', type: 'integer', min: 0, desc: 'Forwarded to llm_call.' },
+  ],
+  // Convenience handler — NOT an engine builtin; the server forwards it leniently, so
+  // these fields are not engine-validated.
+  email_send: [
+    { name: 'template', type: 'string', example: '', desc: 'Email template id.' },
+    { name: 'to', type: 'string', example: '', desc: 'Recipient address.' },
+    { name: 'cc', type: 'array', example: [], desc: 'CC addresses.' },
+    { name: 'data', type: 'object', example: {}, desc: 'Template substitution data.' },
+  ],
+  // Pass-through: the resolved params object is returned verbatim — no fixed keys.
+  transform: [],
+  assert: [
+    { name: 'condition', type: 'string', required: true, example: '', desc: 'Expression evaluated against context; step fails if falsy.' },
+    { name: 'message', type: 'string', default: 'assertion failed', example: 'assertion failed', desc: 'Failure message.' },
+  ],
+  memory_store: [
+    { name: 'text', type: 'string', oneOf: 'content', example: '', desc: 'Text to store and embed (one-of text / embedding).' },
+    { name: 'embedding', type: 'array', oneOf: 'content', desc: 'Precomputed vector (skips the embed call).' },
+    { name: 'key', type: 'string', example: '', desc: 'Memory key (defaults to a content hash of text).' },
+    { name: 'metadata', type: 'object', default: {}, example: {}, desc: 'Arbitrary metadata stored on the record.' },
+    { name: 'model', type: 'string', default: 'text-embedding-3-small', desc: 'Embedding model (when embedding from text).' },
+    { name: 'base_url', type: 'string', default: 'https://api.openai.com/v1', desc: 'Embeddings API base URL.' },
+    { name: 'api_key', type: 'string', desc: 'Embeddings API key (one-of api_key / api_key_env, when embedding from text).' },
+    { name: 'api_key_env', type: 'string', desc: 'Env var name for the embeddings key.' },
+    { name: 'timeout_ms', type: 'integer', min: 0, default: 30000, desc: 'Embed request timeout.' },
+  ],
+  memory_search: [
+    { name: 'query', type: 'string', oneOf: 'query', example: '', desc: 'Search text to embed (one-of query / query_embedding).' },
+    { name: 'query_embedding', type: 'array', oneOf: 'query', desc: 'Precomputed query vector (skips the embed call).' },
+    { name: 'top_k', type: 'integer', min: 1, default: 5, example: 5, desc: 'Max results (floored to 1).' },
+    { name: 'model', type: 'string', default: 'text-embedding-3-small', desc: 'Embedding model (when embedding the query).' },
+    { name: 'base_url', type: 'string', default: 'https://api.openai.com/v1', desc: 'Embeddings API base URL.' },
+    { name: 'api_key', type: 'string', desc: 'Embeddings API key (one-of api_key / api_key_env).' },
+    { name: 'api_key_env', type: 'string', desc: 'Env var name for the embeddings key.' },
+    { name: 'timeout_ms', type: 'integer', min: 0, default: 30000, desc: 'Embed request timeout.' },
+  ],
+  blob_put: [
+    { name: 'text', type: 'string', oneOf: 'payload', example: '', desc: 'UTF-8 content to store (one-of text / data; text wins).' },
+    { name: 'data', type: 'string', oneOf: 'payload', desc: 'Base64-encoded binary content.' },
+    { name: 'content_type', type: 'string', default: 'text/plain; charset=utf-8', example: 'text/plain; charset=utf-8', desc: 'MIME type stored with the blob.' },
+    { name: 'max_size_bytes', type: 'integer', min: 1, default: 26214400, example: 26214400, desc: 'Reject payloads larger than this (default 25 MiB).' },
+  ],
+  blob_get: [
+    { name: 'ref', type: 'string', required: true, example: '', desc: 'Artifact key string, {key}, or {artifact:{key}} (owned by this instance).' },
+    { name: 'encoding', type: 'string', enumValues: ['base64', 'utf8', 'text'], default: 'base64', example: 'base64', desc: 'Output encoding (utf8 and text are equivalent).' },
+    { name: 'max_size_bytes', type: 'integer', min: 1, default: 26214400, example: 26214400, desc: 'Reject artifacts larger than this (default 25 MiB).' },
+  ],
+  human_review: [
+    { name: 'review_data', type: 'any', default: null, example: null, desc: 'Data presented to the reviewer.' },
+    { name: 'instructions', type: 'string', default: '', example: '', desc: 'Instructions shown to the reviewer.' },
+    { name: 'reviewer', type: 'string', default: 'unassigned', example: 'unassigned', desc: 'Assigned reviewer.' },
+    { name: 'notify_url', type: 'string', url: true, example: '', desc: 'Optional webhook to notify (SSRF-guarded; blank = none).' },
+    { name: 'notify_headers', type: 'object', default: {}, example: {}, desc: 'Headers for the notify webhook (string values only).' },
+  ],
+  emit_event: [
+    { name: 'trigger_slug', type: 'string', required: true, example: '', desc: 'Trigger slug of the child sequence to start.' },
+    { name: 'data', type: 'any', default: {}, example: {}, desc: "Payload passed as the child instance's context data." },
+    { name: 'meta', type: 'object', default: {}, example: {}, desc: 'Caller metadata (source / parent_instance_id are system-set).' },
+    { name: 'dedupe_key', type: 'string', example: '', desc: 'Idempotency key — when set, a non-empty string suppresses duplicate emits.' },
+    { name: 'dedupe_scope', type: 'string', enumValues: ['parent', 'tenant'], default: 'parent', example: 'parent', desc: 'Dedupe identity scope (only meaningful with dedupe_key).' },
+  ],
+  send_signal: [
+    { name: 'instance_id', type: 'string', required: true, example: '', desc: 'Target instance UUID (same tenant, non-terminal).' },
+    { name: 'signal_type', type: 'string', required: true, enumValues: ['pause', 'resume', 'cancel', 'update_context'], allowObjectEnum: true, example: 'cancel', desc: 'Signal kind; or { "custom": "name" } for a custom signal.' },
+    { name: 'payload', type: 'any', default: null, example: null, desc: 'Signal payload stored verbatim.' },
+  ],
+  query_instance: [{ name: 'instance_id', type: 'string', required: true, example: '', desc: 'Instance UUID to read (same tenant; not-found → {found:false}).' }],
+  set_state: [
+    { name: 'key', type: 'string', required: true, example: '', desc: 'State key to write.' },
+    { name: 'value', type: 'any', requiredPresent: true, example: '', desc: 'Value to store (any JSON, including null — the KEY must be present).' },
+  ],
+  get_state: [{ name: 'key', type: 'string', required: true, example: '', desc: 'State key to read (value is null if absent).' }],
+  delete_state: [{ name: 'key', type: 'string', required: true, example: '', desc: 'State key to remove.' }],
+  merge_state: [{ name: 'values', type: 'object', requiredPresent: true, example: {}, desc: 'Object whose entries are merged into instance state (empty object allowed).' }],
+  embed: [
+    { name: 'input', type: 'string', required: true, example: '', desc: 'Text (or array of texts) to embed.' },
+    { name: 'model', type: 'string', default: 'text-embedding-3-small', example: 'text-embedding-3-small', desc: 'Embedding model.' },
+    { name: 'base_url', type: 'string', default: 'https://api.openai.com/v1', desc: 'Embeddings API base URL.' },
+    { name: 'api_key', type: 'string', desc: 'Embeddings API key (one-of api_key / api_key_env).' },
+    { name: 'api_key_env', type: 'string', desc: 'Env var name for the embeddings key.' },
+    { name: 'timeout_ms', type: 'integer', min: 0, default: 30000, desc: 'Request timeout in milliseconds.' },
+  ],
+}
+
+/** True for a path that targets a nested object field or array item (reference/validation only). */
+function isPathName(name: string): boolean {
+  return name.includes('.') || name.includes('[]')
+}
+
+function buildHandlerTemplate(defs: HandlerParamDef[]): Json {
+  const obj: Record<string, Json> = {}
+  for (const d of defs) if (d.example !== undefined && !isPathName(d.name)) obj[d.name] = d.example
+  return obj
 }
 
 /**
- * Required-parameter contract per builtin handler, derived from the engine handler
- * source (orch8-engine/src/handlers/*). The editor uses this to block a save when a
- * step's handler is missing params the server would reject at runtime.
- *
- *  - `required`    : keys that must be present and non-blank ('' / null = missing).
- *  - `requiredAny` : keys that must merely be PRESENT (any JSON value, incl. null/'' —
- *                    e.g. set_state.value / merge_state.values, where an empty value is
- *                    legitimate but the KEY must exist).
- *  - `oneOf`       : groups where at least ONE key must be present and non-blank
- *                    (e.g. memory_store needs `text` OR `embedding`).
- *
- * Handlers absent from this map impose no required-param check — noop, log, sleep,
- * fail, transform, llm_call, agent, human_review (and the non-builtin email_send) all
- * tolerate missing params at the server.
+ * Starter `params` template per handler — DERIVED from HANDLER_PARAM_SPEC (every param
+ * marked with an `example`). Selecting a handler prefills the Params JSON with this.
  */
-export interface HandlerParamRequirement {
-  required?: string[]
-  requiredAny?: string[]
-  oneOf?: string[][]
-}
-
-export const HANDLER_PARAM_REQUIREMENTS: Record<string, HandlerParamRequirement> = {
-  http_request: { required: ['url'] },
-  tool_call: { required: ['url'] },
-  // url OR server; `tool_name` is additionally required for action='call' (in code below).
-  mcp_call: { oneOf: [['url', 'server']] },
-  assert: { required: ['condition'] },
-  set_state: { required: ['key'], requiredAny: ['value'] },
-  get_state: { required: ['key'] },
-  delete_state: { required: ['key'] },
-  merge_state: { requiredAny: ['values'] },
-  emit_event: { required: ['trigger_slug'] },
-  send_signal: { required: ['instance_id', 'signal_type'] },
-  query_instance: { required: ['instance_id'] },
-  embed: { required: ['input'] },
-  memory_store: { oneOf: [['text', 'embedding']] },
-  memory_search: { oneOf: [['query', 'query_embedding']] },
-  blob_put: { oneOf: [['text', 'data']] },
-  blob_get: { required: ['ref'] },
-}
+export const HANDLER_PARAM_TEMPLATE: Record<string, Json> = Object.fromEntries(
+  STEP_HANDLERS.map((h) => [h, buildHandlerTemplate(HANDLER_PARAM_SPEC[h] ?? [])]),
+)
 
 function isBlankParam(v: unknown): boolean {
   return v === undefined || v === null || (typeof v === 'string' && v.trim() === '')
 }
 
 /**
- * The required params a step's handler is MISSING, given its params object. Returns
- * `[]` when the handler has no required params or all are satisfied. Drives both the
- * live editor hint and the save-blocking validation (treeOps.validateSequence).
+ * The required params a step's handler is MISSING, given its params object — derived
+ * from HANDLER_PARAM_SPEC (`required`, `requiredPresent`, `oneOf` groups). Returns `[]`
+ * when nothing is missing. Drives the live editor hint and the save-blocking validation.
  */
 export function missingHandlerParams(handler: string, params: unknown): string[] {
-  const req = HANDLER_PARAM_REQUIREMENTS[handler]
-  if (!req) return []
+  const defs = HANDLER_PARAM_SPEC[handler]
+  if (!defs) return []
   const obj: Record<string, unknown> =
-    params != null && typeof params === 'object' && !Array.isArray(params)
-      ? (params as Record<string, unknown>)
-      : {}
+    params != null && typeof params === 'object' && !Array.isArray(params) ? (params as Record<string, unknown>) : {}
   const missing: string[] = []
-  for (const k of req.required ?? []) if (isBlankParam(obj[k])) missing.push(k)
-  for (const k of req.requiredAny ?? []) if (!(k in obj)) missing.push(k)
-  for (const group of req.oneOf ?? []) {
-    if (group.every((k) => isBlankParam(obj[k]))) missing.push(group.join(' or '))
+  const groups: Record<string, HandlerParamDef[]> = {}
+  for (const d of defs) {
+    if (isPathName(d.name)) continue
+    if (d.oneOf) {
+      ;(groups[d.oneOf] ??= []).push(d)
+    } else if (d.required && isBlankParam(obj[d.name])) {
+      missing.push(d.name)
+    } else if (d.requiredPresent && !(d.name in obj)) {
+      missing.push(d.name)
+    }
+  }
+  for (const g of Object.values(groups)) {
+    if (g.every((d) => isBlankParam(obj[d.name]))) missing.push(g.map((d) => d.name).join(' or '))
   }
   // mcp_call: `tool_name` is required for the default 'call' action, not for 'list'.
   if (handler === 'mcp_call' && obj.action !== 'list' && isBlankParam(obj.tool_name)) {
@@ -403,138 +530,100 @@ export function missingHandlerParams(handler: string, params: unknown): string[]
   return missing
 }
 
-/**
- * Engine-defined VALUE constraints per handler param (enum value sets, numeric
- * ranges, URL format), derived from orch8-engine/src/handlers/*. Each entry carries
- * a human-readable `label` (shown beside the param example so the operator sees every
- * allowed value / range) and an optional machine `rule` used for save-time value
- * validation. Omitting `rule` makes a constraint display-only — used where the engine
- * is lenient/open (e.g. llm_call `provider` falls back to openai; message `role` is
- * enforced by the provider, not the engine).
- */
-export type ParamValueRule =
-  | { kind: 'enum'; values: string[]; allowObject?: boolean }
-  | { kind: 'int'; min?: number; max?: number }
-  | { kind: 'url' }
-
-export interface ParamConstraint {
-  /** Param key, or a one-level dot path for a nested object (e.g. 'tool_dispatch.type'). */
-  param: string
-  /** Allowed values / range, shown beside the handler's param example. */
-  label: string
-  /** Machine rule validated on save when the value is present; omit for display-only. */
-  rule?: ParamValueRule
-}
-
-export const HANDLER_PARAM_CONSTRAINTS: Record<string, ParamConstraint[]> = {
-  log: [{ param: 'level', label: 'one of: debug, info, warn', rule: { kind: 'enum', values: ['debug', 'info', 'warn'] } }],
-  sleep: [{ param: 'duration_ms', label: 'integer ≥ 0 (milliseconds)', rule: { kind: 'int', min: 0 } }],
-  http_request: [
-    { param: 'url', label: 'http(s) URL — public host (SSRF-guarded at runtime)', rule: { kind: 'url' } },
-    { param: 'method', label: 'one of: GET, POST, PUT, PATCH, DELETE', rule: { kind: 'enum', values: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] } },
-    { param: 'timeout_ms', label: 'integer ≥ 0 (default 10000)', rule: { kind: 'int', min: 0 } },
-  ],
-  tool_call: [
-    { param: 'url', label: 'http(s) URL — public host (SSRF-guarded at runtime)', rule: { kind: 'url' } },
-    { param: 'method', label: 'one of: GET, POST, PUT, PATCH (default POST)', rule: { kind: 'enum', values: ['GET', 'POST', 'PUT', 'PATCH'] } },
-    { param: 'timeout_ms', label: 'integer ≥ 0 (default 30000)', rule: { kind: 'int', min: 0 } },
-  ],
-  mcp_call: [
-    { param: 'action', label: 'one of: call, list', rule: { kind: 'enum', values: ['call', 'list'] } },
-    { param: 'url', label: 'http(s) URL when set (or use `server`)', rule: { kind: 'url' } },
-    { param: 'timeout_ms', label: 'integer ≥ 0 (default 30000)', rule: { kind: 'int', min: 0 } },
-  ],
-  agent: [
-    { param: 'max_iterations', label: 'integer 1–50 (clamped to 50)', rule: { kind: 'int', min: 1, max: 50 } },
-    { param: 'tool_dispatch.type', label: 'one of: http, mcp', rule: { kind: 'enum', values: ['http', 'mcp'] } },
-  ],
-  send_signal: [
-    {
-      param: 'signal_type',
-      label: 'one of: pause, resume, cancel, update_context — or { "custom": "name" }',
-      rule: { kind: 'enum', values: ['pause', 'resume', 'cancel', 'update_context'], allowObject: true },
-    },
-  ],
-  emit_event: [{ param: 'dedupe_scope', label: 'one of: parent, tenant (when set)', rule: { kind: 'enum', values: ['parent', 'tenant'] } }],
-  blob_get: [
-    { param: 'encoding', label: 'one of: base64, utf8 (alias: text)', rule: { kind: 'enum', values: ['base64', 'utf8', 'text'] } },
-    { param: 'max_size_bytes', label: 'integer ≥ 1 (default 26214400 = 25 MiB)', rule: { kind: 'int', min: 1 } },
-  ],
-  blob_put: [{ param: 'max_size_bytes', label: 'integer ≥ 1 (default 26214400 = 25 MiB)', rule: { kind: 'int', min: 1 } }],
-  memory_search: [{ param: 'top_k', label: 'integer ≥ 1 (default 5)', rule: { kind: 'int', min: 1 } }],
-  llm_call: [
-    // provider falls back to openai for unknown values (open set) → display-only.
-    { param: 'provider', label: 'preset: openai, anthropic, gemini, deepseek, qwen, perplexity, groq, together, mistral, openrouter (or custom with base_url)' },
-    { param: 'max_tokens', label: 'integer ≥ 1 (default 4096)', rule: { kind: 'int', min: 1 } },
-    // role is enforced by the provider API, not the engine → display-only.
-    { param: 'messages[].role', label: 'each message role: system, user, assistant, tool' },
-  ],
-}
-
-/** The engine-defined value constraints for a handler (display + validation source). */
-export function handlerParamConstraints(handler: string): ParamConstraint[] {
-  return HANDLER_PARAM_CONSTRAINTS[handler] ?? []
-}
-
 /** A `{{ … }}` template reference is resolved at runtime — skip static value checks. */
 function isTemplateRef(v: unknown): boolean {
   return typeof v === 'string' && v.includes('{{')
 }
 
-/** Read a value at a one-level dot path ('a' or 'a.b'); returns undefined if absent. */
-function valueAtPath(obj: Record<string, unknown>, path: string): unknown {
-  if (!path.includes('.')) return obj[path]
+/** Values at a path: scalar/nested ('a' | 'a.b') → one value; array-item ('a[].b') → one per item. */
+function valuesAtPath(obj: Record<string, unknown>, path: string): unknown[] {
+  if (path.includes('[].')) {
+    const [arrKey, field] = path.split('[].')
+    const arr = obj[arrKey]
+    if (!Array.isArray(arr)) return []
+    return arr.map((it) => (it != null && typeof it === 'object' ? (it as Record<string, unknown>)[field] : undefined))
+  }
+  if (!path.includes('.')) return [obj[path]]
   let cur: unknown = obj
   for (const p of path.split('.')) {
-    if (cur == null || typeof cur !== 'object') return undefined
+    if (cur == null || typeof cur !== 'object') return [undefined]
     cur = (cur as Record<string, unknown>)[p]
   }
-  return cur
-}
-
-function rangeText(r: { min?: number; max?: number }): string {
-  if (r.min != null && r.max != null) return `${r.min}–${r.max}`
-  if (r.min != null) return `≥ ${r.min}`
-  if (r.max != null) return `≤ ${r.max}`
-  return ''
+  return [cur]
 }
 
 /**
  * Validation messages for PRESENT param values that violate the engine's value
- * constraints (wrong enum value, out-of-range/non-integer number, malformed URL).
- * Absent/blank values are ignored here (covered by missingHandlerParams) and runtime
- * `{{ … }}` template refs are skipped. Drives the live editor hint and the
- * save-blocking validation, alongside missingHandlerParams.
+ * constraints (wrong enum value, out-of-range/non-integer number, malformed URL) —
+ * derived from HANDLER_PARAM_SPEC. Absent/blank values are ignored (covered by
+ * missingHandlerParams), `{{ … }}` template refs are skipped, and `enumOpen` enums
+ * (open sets like llm_call.provider) are advisory only. Drives the live editor hint
+ * and the save-blocking validation alongside missingHandlerParams.
  */
 export function invalidHandlerParams(handler: string, params: unknown): string[] {
-  const cons = HANDLER_PARAM_CONSTRAINTS[handler]
-  if (!cons) return []
+  const defs = HANDLER_PARAM_SPEC[handler]
+  if (!defs) return []
   const obj: Record<string, unknown> =
     params != null && typeof params === 'object' && !Array.isArray(params) ? (params as Record<string, unknown>) : {}
   const out: string[] = []
-  for (const c of cons) {
-    if (!c.rule) continue
-    const v = valueAtPath(obj, c.param)
-    if (v === undefined || v === null) continue
-    if (typeof v === 'string' && v.trim() === '') continue
-    if (isTemplateRef(v)) continue
-    const r = c.rule
-    if (r.kind === 'enum') {
-      if (typeof v === 'object') {
-        if (!r.allowObject) out.push(`${c.param} must be one of: ${r.values.join(', ')}`)
-      } else if (typeof v !== 'string' || !r.values.includes(v)) {
-        out.push(`${c.param} must be one of: ${r.values.join(', ')}${r.allowObject ? ' (or {"custom":"…"})' : ''}`)
+  for (const d of defs) {
+    const hasEnum = d.enumValues && !d.enumOpen
+    if (!hasEnum && d.min == null && d.max == null && !d.url) continue
+    for (const v of valuesAtPath(obj, d.name)) {
+      if (v === undefined || v === null) continue
+      if (typeof v === 'string' && v.trim() === '') continue
+      if (isTemplateRef(v)) continue
+      if (hasEnum) {
+        const vals = d.enumValues as readonly string[]
+        if (typeof v === 'object') {
+          if (!d.allowObjectEnum) out.push(`${d.name} must be one of: ${vals.join(', ')}`)
+        } else if (typeof v !== 'string' || !vals.includes(v)) {
+          out.push(`${d.name} must be one of: ${vals.join(', ')}${d.allowObjectEnum ? ' (or {"custom":"…"})' : ''}`)
+        }
+      } else if (d.url) {
+        if (typeof v !== 'string' || !/^https?:\/\//i.test(v)) out.push(`${d.name} must be an http(s) URL`)
+      } else if (d.min != null || d.max != null) {
+        if (typeof v !== 'number' || !Number.isInteger(v) || (d.min != null && v < d.min) || (d.max != null && v > d.max)) {
+          const range = d.min != null && d.max != null ? `${d.min}–${d.max}` : d.min != null ? `≥ ${d.min}` : `≤ ${d.max}`
+          out.push(`${d.name} must be an integer ${range}`)
+        }
       }
-    } else if (r.kind === 'int') {
-      if (typeof v !== 'number' || !Number.isInteger(v) || (r.min != null && v < r.min) || (r.max != null && v > r.max)) {
-        const range = rangeText(r)
-        out.push(`${c.param} must be an integer${range ? ' ' + range : ''}`)
-      }
-    } else if (r.kind === 'url') {
-      if (typeof v !== 'string' || !/^https?:\/\//i.test(v)) out.push(`${c.param} must be an http(s) URL`)
     }
   }
   return out
+}
+
+/** One row of the complete in-editor parameter reference for a handler. */
+export interface ParamRefRow {
+  name: string
+  required: boolean
+  /** Compact type · constraint · default summary, e.g. "integer 1–50 · default 6". */
+  meta: string
+  desc: string
+}
+
+function paramMeta(d: HandlerParamDef): string {
+  const parts: string[] = [d.type]
+  if (d.enumValues) parts.push(`one of: ${d.enumValues.join(', ')}${d.allowObjectEnum ? ' (or {"custom":…})' : ''}${d.enumOpen ? ' (or custom)' : ''}`)
+  if (d.url) parts.push('http(s) URL')
+  if (d.min != null || d.max != null) parts.push(d.min != null && d.max != null ? `${d.min}–${d.max}` : d.min != null ? `≥ ${d.min}` : `≤ ${d.max}`)
+  if (d.oneOf) parts.push(`one-of ${d.oneOf}`)
+  if (d.default !== undefined) parts.push(`default ${JSON.stringify(d.default)}`)
+  return parts.join(' · ')
+}
+
+/**
+ * The COMPLETE parameter reference for a handler (EVERY param the engine reads, not
+ * just the templated ones) — shown in the editor under the Params example so the full
+ * parameter surface is always visible. Empty for unknown/custom handlers.
+ */
+export function handlerParamReference(handler: string): ParamRefRow[] {
+  return (HANDLER_PARAM_SPEC[handler] ?? []).map((d) => ({
+    name: d.name,
+    required: !!d.required || !!d.requiredPresent,
+    meta: paramMeta(d),
+    desc: d.desc,
+  }))
 }
 
 /**

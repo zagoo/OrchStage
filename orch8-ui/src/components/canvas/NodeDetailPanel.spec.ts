@@ -196,13 +196,26 @@ describe('NodeDetailPanel', () => {
     expect(patch.handler).toBe('send_signal')
   })
 
-  it('shows the handler value constraints (enums/ranges) beside the Params example (round 12)', async () => {
+  it('emit_event template now includes dedupe_key + dedupe_scope (the reported Bug 1)', async () => {
+    const wrapper = mountPanel(stepNodeEmptyParams())
+    await selectWith(wrapper, 'emit_event')!.setValue('emit_event')
+    const tpl = wrapper.find('textarea').element.value
+    expect(tpl).toContain('"trigger_slug"')
+    expect(tpl).toContain('"dedupe_key"') // previously missing
+    expect(tpl).toContain('"dedupe_scope"') // previously missing
+    expect(tpl).toContain('"meta"')
+    // and the complete reference enumerates the dedupe_scope values
+    expect(wrapper.text()).toContain('parent, tenant')
+  })
+
+  it('shows the COMPLETE parameter reference (every param + enums/ranges) beside the example (round 13)', async () => {
     const wrapper = mountPanel(stepNodeEmptyParams())
     await selectWith(wrapper, 'send_signal')!.setValue('send_signal')
     const txt = wrapper.text()
-    expect(txt).toContain('Allowed values')
+    expect(txt).toContain('All parameters')
     expect(txt).toContain('signal_type')
     expect(txt).toContain('pause, resume, cancel, update_context') // every enum value listed
+    expect(txt).toContain('payload') // a non-required param is listed too
   })
 
   it('blocks Apply on an invalid param VALUE, then emits once corrected (round 12)', async () => {

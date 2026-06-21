@@ -27,17 +27,25 @@ describe('JsonExampleControls', () => {
     expect(w.emitted('insert')).toBeTruthy()
   })
 
-  it('lists the allowed values & ranges when constraints are provided', () => {
+  it('lists the COMPLETE parameter reference when params are provided', () => {
     const w = mount(JsonExampleControls, {
-      props: { value, constraints: [{ param: 'method', label: 'one of: GET, POST, PUT, PATCH, DELETE' }] },
+      props: {
+        value,
+        params: [
+          { name: 'url', required: true, meta: 'string · http(s) URL', desc: 'Endpoint URL.' },
+          { name: 'method', required: false, meta: 'string · one of: GET, POST, PUT, PATCH, DELETE', desc: 'HTTP method.' },
+        ],
+      },
     })
-    expect(w.text()).toContain('Allowed values')
-    expect(w.text()).toContain('method')
+    expect(w.text()).toContain('All parameters')
+    expect(w.text()).toContain('url')
+    expect(w.text()).toContain('required') // the required badge
     expect(w.text()).toContain('one of: GET, POST, PUT, PATCH, DELETE')
+    expect(w.text()).toContain('Endpoint URL.')
   })
 
-  it('omits the constraints section when none are provided', () => {
+  it('omits the parameter reference when none are provided', () => {
     const w = mount(JsonExampleControls, { props: { value } })
-    expect(w.text()).not.toContain('Allowed values')
+    expect(w.text()).not.toContain('All parameters')
   })
 })

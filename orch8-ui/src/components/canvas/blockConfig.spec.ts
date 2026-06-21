@@ -8,10 +8,9 @@ import type { BlockType } from '@/api/types/sequences'
 import {
   STEP_JSON_FIELD_EXAMPLE,
   HANDLER_PARAM_TEMPLATE,
-  HANDLER_PARAM_REQUIREMENTS,
+  HANDLER_PARAM_SPEC,
   missingHandlerParams,
-  HANDLER_PARAM_CONSTRAINTS,
-  handlerParamConstraints,
+  handlerParamReference,
   invalidHandlerParams,
   STEP_HANDLERS,
   BLOCK_VISUAL,
@@ -107,14 +106,52 @@ describe('handler param templates mirror the engine contract (Bug 2 & 3)', () =>
     expect(T.fail).toHaveProperty('retryable') // not `code`
   })
 
-  it('every handler with a required-param contract ships a template declaring those keys', () => {
-    for (const [h, req] of Object.entries(HANDLER_PARAM_REQUIREMENTS)) {
-      const tpl = HANDLER_PARAM_TEMPLATE[h] as Record<string, unknown> | undefined
-      expect(tpl, `template for ${h}`).toBeDefined()
-      for (const k of req.required ?? []) expect(k in (tpl as object), `${h}.${k}`).toBe(true)
-      for (const k of req.requiredAny ?? []) expect(k in (tpl as object), `${h}.${k}`).toBe(true)
-      for (const group of req.oneOf ?? [])
-        expect(group.some((k) => k in (tpl as object)), `${h} oneOf ${group.join('|')}`).toBe(true)
+  it('emit_event template includes dedupe_key AND dedupe_scope (round-13 regression)', () => {
+    // The exact omission the user reported as "disastrous" — guard it forever.
+    expect(T.emit_event).toHaveProperty('dedupe_key')
+    expect(T.emit_event).toHaveProperty('dedupe_scope')
+    expect(T.emit_event).toHaveProperty('meta')
+    expect(T.emit_event).toHaveProperty('data')
+    expect(['parent', 'tenant']).toContain(T.emit_event.dedupe_scope)
+  })
+})
+
+describe('HANDLER_PARAM_SPEC is the single source of truth (round 13)', () => {
+  it('every STEP_HANDLER has a spec entry and a derived template', () => {
+    for (const h of STEP_HANDLERS) {
+      expect(HANDLER_PARAM_SPEC[h], `spec for ${h}`).toBeDefined()
+      expect(HANDLER_PARAM_TEMPLATE[h], `template for ${h}`).toBeDefined()
+    }
+  })
+
+  it('the template is DERIVED from the spec — every template key is a top-level spec param with an example', () => {
+    for (const h of STEP_HANDLERS) {
+      const defs = HANDLER_PARAM_SPEC[h]
+      const tpl = HANDLER_PARAM_TEMPLATE[h] as Record<string, unknown>
+      for (const key of Object.keys(tpl)) {
+        const def = defs.find((d) => d.name === key)
+        expect(def, `${h}.${key} present in spec`).toBeDefined()
+        expect(def!.example, `${h}.${key} has an example`).not.toBeUndefined()
+      }
+    }
+  })
+
+  it('every REQUIRED param appears in the starter template so the operator sees it', () => {
+    for (const h of STEP_HANDLERS) {
+      const tpl = HANDLER_PARAM_TEMPLATE[h] as Record<string, unknown>
+      for (const d of HANDLER_PARAM_SPEC[h]) {
+        if ((d.required || d.requiredPresent) && !d.name.includes('.') && !d.name.includes('[')) {
+          expect(d.name in tpl, `${h}.${d.name} required → in template`).toBe(true)
+        }
+      }
+    }
+  })
+
+  it('spec params are well-formed (unique names, non-empty descriptions)', () => {
+    for (const [h, defs] of Object.entries(HANDLER_PARAM_SPEC)) {
+      const names = defs.map((d) => d.name)
+      expect(new Set(names).size, `${h} unique param names`).toBe(names.length)
+      for (const d of defs) expect(d.desc.length, `${h}.${d.name} desc`).toBeGreaterThan(5)
     }
   })
 })
@@ -168,31 +205,32 @@ describe('missingHandlerParams — required-param validation (Bug 3)', () => {
   })
 })
 
-describe('handler param VALUE constraints — display surface (round 12)', () => {
-  it('every constrained param carries a non-trivial allowed-values label', () => {
-    for (const [h, cons] of Object.entries(HANDLER_PARAM_CONSTRAINTS)) {
-      expect(cons.length, h).toBeGreaterThan(0)
-      for (const c of cons) {
-        expect(c.param, `${h} param`).toBeTruthy()
-        expect(c.label.length, `${h}.${c.param} label`).toBeGreaterThan(3)
-      }
-    }
+describe('handlerParamReference — COMPLETE parameter reference (round 13)', () => {
+  it('lists EVERY param the spec defines (not just the templated ones)', () => {
+    const ref = handlerParamReference('llm_call')
+    expect(ref.length).toBe(HANDLER_PARAM_SPEC.llm_call.length)
+    const names = ref.map((r) => r.name)
+    expect(names).toContain('response_schema') // advanced, absent from the starter template
+    expect(names).toContain('providers')
+    expect(names).toContain('messages')
   })
 
-  it('enum labels enumerate EVERY allowed value the source defines', () => {
-    const labelFor = (h: string, p: string) => handlerParamConstraints(h).find((c) => c.param === p)!.label
-    expect(labelFor('send_signal', 'signal_type')).toContain('pause, resume, cancel, update_context')
-    expect(labelFor('http_request', 'method')).toContain('GET, POST, PUT, PATCH, DELETE')
-    expect(labelFor('tool_call', 'method')).toContain('GET, POST, PUT, PATCH')
-    expect(labelFor('mcp_call', 'action')).toContain('call, list')
-    expect(labelFor('agent', 'max_iterations')).toContain('1–50')
-    expect(labelFor('blob_get', 'encoding')).toContain('base64, utf8')
-    expect(labelFor('emit_event', 'dedupe_scope')).toContain('parent, tenant')
+  it('marks required params and enumerates EVERY allowed value / range in meta', () => {
+    const rowFor = (h: string, p: string) => handlerParamReference(h).find((r) => r.name === p)!
+    expect(rowFor('send_signal', 'signal_type').required).toBe(true)
+    expect(rowFor('send_signal', 'signal_type').meta).toContain('pause, resume, cancel, update_context')
+    expect(rowFor('http_request', 'method').meta).toContain('GET, POST, PUT, PATCH, DELETE')
+    expect(rowFor('tool_call', 'method').meta).toContain('GET, POST, PUT, PATCH')
+    expect(rowFor('mcp_call', 'action').meta).toContain('call, list')
+    expect(rowFor('agent', 'max_iterations').meta).toContain('1–50')
+    expect(rowFor('blob_get', 'encoding').meta).toContain('base64, utf8')
+    expect(rowFor('emit_event', 'dedupe_scope').meta).toContain('parent, tenant')
+    expect(rowFor('emit_event', 'trigger_slug').required).toBe(true)
   })
 
-  it('handlerParamConstraints returns [] for an unconstrained / unknown handler', () => {
-    expect(handlerParamConstraints('noop')).toEqual([])
-    expect(handlerParamConstraints('totally_custom')).toEqual([])
+  it('returns [] for an unconstrained / unknown handler', () => {
+    expect(handlerParamReference('noop')).toEqual([])
+    expect(handlerParamReference('totally_custom')).toEqual([])
   })
 })
 

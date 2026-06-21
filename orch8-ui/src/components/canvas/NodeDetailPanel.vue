@@ -22,7 +22,7 @@ import {
   handlerDescription,
   missingHandlerParams,
   invalidHandlerParams,
-  handlerParamConstraints,
+  handlerParamReference,
 } from './blockConfig'
 import JsonExampleControls from './JsonExampleControls.vue'
 import { titleCase, formatDateTime, prettyJson } from '@/lib/format'
@@ -205,9 +205,10 @@ const paramMissing = computed<string[]>(() => {
   return missingHandlerParams(h, parsed)
 })
 
-/** Engine value constraints (enum sets / ranges / formats) for the selected handler —
- * surfaced beside the Params example so every allowed value is visible. */
-const paramConstraints = computed(() => handlerParamConstraints(form.value.handler ?? ''))
+/** COMPLETE parameter reference (every param the engine reads) for the selected
+ * handler — surfaced beside the Params example so the full parameter surface is always
+ * visible, not just the templated fields. */
+const paramReference = computed(() => handlerParamReference(form.value.handler ?? ''))
 
 /** Present param VALUES that violate the engine's constraints (bad enum / range / URL),
  * computed live from the Params editor. Empty while the JSON is unparseable. */
@@ -583,7 +584,7 @@ const tabs = [
               <Field label="Params (JSON)" :error="jsonErrors.params" class="mb-3">
                 <JsonExampleControls
                   :value="paramsExample()"
-                  :constraints="paramConstraints"
+                  :params="paramReference"
                   @insert="form.params = paramsExample()"
                 />
                 <Textarea v-model="form.params" :rows="6" class="mono text-[12px]" />
