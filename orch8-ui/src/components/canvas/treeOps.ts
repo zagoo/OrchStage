@@ -348,6 +348,32 @@ export function blocksEqualIgnoringIds(a: BlockDefinition[], b: BlockDefinition[
   return JSON.stringify(a.map(blankBlockId)) === JSON.stringify(b.map(blankBlockId))
 }
 
+/** A container slot the editor can add on demand — supported by the model, exposed in the UI. */
+export type AddableSlot = 'branch' | 'default' | 'finally'
+
+/**
+ * Add an empty container slot the block's type supports but does not have yet:
+ *   - 'branch'  → append a new empty branch to a `parallel`/`race` (unbounded count)
+ *   - 'default' → add the optional `default` branch to a `router` (no-op if present)
+ *   - 'finally' → add the optional `finally_block` to a `try_catch` (no-op if present)
+ * Identity for any other (block, slot) pairing. The new slot is then populated via
+ * the usual `addStepInto`.
+ */
+export function addContainerSlot(blocks: BlockDefinition[], id: string, slot: AddableSlot): BlockDefinition[] {
+  return updateBlockById(blocks, id, (b) => {
+    if (slot === 'branch' && (b.type === 'parallel' || b.type === 'race')) {
+      return { ...b, branches: [...b.branches, []] }
+    }
+    if (slot === 'default' && b.type === 'router' && !b.default) {
+      return { ...b, default: [] }
+    }
+    if (slot === 'finally' && b.type === 'try_catch' && !b.finally_block) {
+      return { ...b, finally_block: [] }
+    }
+    return b
+  })
+}
+
 /** Swap a block with its previous/next sibling in the same list. No-op at edges. */
 export function reorderSibling(
   blocks: BlockDefinition[],

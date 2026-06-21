@@ -398,6 +398,16 @@ describe('useCanvasStore', () => {
       expect(store.isValid).toBe(true)
     })
 
+    it('addContainerSlot adds a parallel branch and marks dirty', () => {
+      const store = useCanvasStore()
+      const seq = makeSeq('s1')
+      seq.blocks = [{ type: 'parallel', id: 'p', branches: [[realStep('a')]] } as BlockDefinition]
+      store.loadSequence(seq)
+      store.addContainerSlot('p', 'branch')
+      expect((store.blocks[0] as { branches: unknown[] }).branches).toHaveLength(2)
+      expect(store.isDirty).toBe(true)
+    })
+
     it('surfaces validation errors via blockErrors and isValid', () => {
       const store = useCanvasStore()
       const seq = makeSeq('s1')

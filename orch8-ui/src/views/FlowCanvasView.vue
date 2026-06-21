@@ -53,6 +53,7 @@ import {
   blocksEqualIgnoringIds,
   type MoveTarget,
   type ContainerRef,
+  type AddableSlot,
 } from '@/components/canvas/treeOps'
 import { canFollow, validateWorkflow } from '@/components/canvas/blockRules'
 import { BLOCK_VISUAL, NODE_TITLE_FIELD, type NodeTitleField } from '@/components/canvas/blockConfig'
@@ -461,6 +462,9 @@ function panelMove(target: MoveTarget) {
 function panelAddInto(key: string) {
   if (selectedNodeId.value) canvas.addStepInto(selectedNodeId.value, key)
 }
+function panelAddContainer(slot: AddableSlot) {
+  if (selectedNodeId.value) canvas.addContainerSlot(selectedNodeId.value, slot)
+}
 
 const detailError = computed(() =>
   detailNodeData.value ? canvas.blockErrors[detailNodeData.value.block.id] : undefined,
@@ -679,15 +683,12 @@ const errorCount = computed(() => Object.keys(canvas.blockErrors).length + canva
         v-if="sequenceLoaded"
         :dirty="dirty"
         :saving="saving"
-        :minimap-visible="minimapVisible"
         :sequence-loaded="sequenceLoaded"
         :valid="canvas.isValid"
         :fullscreen="isFullscreen"
         :node-title-field="nodeTitleField"
         @add-step="addStepFromToolbar"
-        @fit-view="fitView({ padding: 0.12, duration: 300 })"
         @auto-layout="runAutoLayout"
-        @toggle-minimap="minimapVisible = !minimapVisible"
         @toggle-fullscreen="toggleFullscreen"
         @toggle-node-title="toggleNodeTitle"
         @save="handleSave"
@@ -803,6 +804,7 @@ const errorCount = computed(() => Object.keys(canvas.blockErrors).length + canva
       @insert-after="panelInsertAfter"
       @move="panelMove"
       @add-into="panelAddInto"
+      @add-container="panelAddContainer"
     />
   </div>
 </template>

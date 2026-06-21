@@ -33,6 +33,7 @@ import {
   updateBlockConfig,
   renameBlock,
   blocksEqualIgnoringIds,
+  addContainerSlot,
   reorderSibling,
   moveBlock,
   makeBlockOfType,
@@ -436,5 +437,45 @@ describe('blocksEqualIgnoringIds', () => {
     expect(
       blocksEqualIgnoringIds([step('a'), parallel('p', [step('x')])], [step('a'), parallel('p', [])]),
     ).toBe(false)
+  })
+})
+
+// --- addContainerSlot (expose branch/default/finally the model allows) --------
+describe('addContainerSlot', () => {
+  it("branch: appends an empty branch to parallel and race (count isn't capped)", () => {
+    const p = addContainerSlot([parallel('p', [step('a')])], 'p', 'branch')
+    expect((p[0] as ParallelBlock).branches).toHaveLength(2)
+    expect((p[0] as ParallelBlock).branches[1]).toEqual([])
+    const r = addContainerSlot([race('r', [step('a')], [step('b')])], 'r', 'branch')
+    expect((r[0] as RaceBlock).branches).toHaveLength(3)
+  })
+
+  it('branch: no-op for a non-fan-out block', () => {
+    const s = [step('s')]
+    expect(addContainerSlot(s, 's', 'branch')).toEqual(s)
+  })
+
+  it('default: adds a router default branch, idempotent, routers only', () => {
+    const added = addContainerSlot([router('rt', [{ condition: 'c', blocks: [] }])], 'rt', 'default')
+    expect((added[0] as RouterBlock).default).toEqual([])
+    // idempotent: an existing default is preserved untouched
+    const withDef = [router('rt', [{ condition: 'c', blocks: [] }], [step('d')])]
+    expect((addContainerSlot(withDef, 'rt', 'default')[0] as RouterBlock).default?.[0].id).toBe('d')
+    // non-router untouched
+    expect(addContainerSlot([step('s')], 's', 'default')).toEqual([step('s')])
+  })
+
+  it('finally: adds a try_catch finally block, idempotent', () => {
+    const added = addContainerSlot([tryCatch('tc', [step('t')], [step('c')])], 'tc', 'finally')
+    expect((added[0] as TryCatchBlock).finally_block).toEqual([])
+    const withFin = [tryCatch('tc', [step('t')], [step('c')], [step('f')])]
+    expect((addContainerSlot(withFin, 'tc', 'finally')[0] as TryCatchBlock).finally_block?.[0].id).toBe('f')
+  })
+
+  it('reaches a nested block by id', () => {
+    const tree = [parallel('outer', [tryCatch('tc', [step('t')], [step('c')])])]
+    const out = addContainerSlot(tree, 'tc', 'finally')
+    const tc = findBlock(out, 'tc') as TryCatchBlock
+    expect(tc.finally_block).toEqual([])
   })
 })

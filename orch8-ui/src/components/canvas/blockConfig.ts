@@ -162,6 +162,29 @@ export const BLOCK_VISUAL: Record<BlockType, BlockVisual> = {
   },
 }
 
+/**
+ * One-line business-logic summary per block type — shown in the node editor so the
+ * operator understands what the selected Block Type DOES, not just its shape.
+ * DESIGN_REFERENCE §dag-sequences.md §3 Block Type Taxonomy.
+ */
+export const BLOCK_TYPE_DESCRIPTION: Record<BlockType, string> = {
+  step: 'A single unit of work — runs one handler with its parameters, then continues.',
+  parallel: 'Fan-out: runs every branch concurrently and waits for ALL branches to finish.',
+  race: 'Runs branches concurrently; the FIRST to resolve (or succeed) wins and the rest are cancelled.',
+  loop: 'Repeats its body while the condition holds, up to max_iterations.',
+  for_each: 'Runs its body once per item in a collection (each item bound to item_var).',
+  router: 'Evaluates routes top-down; the first matching condition runs its branch, otherwise the default branch runs.',
+  try_catch: 'Runs the try block; on error runs the catch block; the finally block always runs.',
+  sub_sequence: 'Calls another named sequence as a nested sub-workflow (an opaque step here).',
+  a_b_split: 'Splits instances across weighted variants for A/B experiments — one variant runs per instance.',
+  cancellation_scope: 'Groups blocks so they can be cancelled together as a single unit.',
+}
+
+/** Business-logic summary for a block type. */
+export function blockTypeDescription(type: BlockType): string {
+  return BLOCK_TYPE_DESCRIPTION[type]
+}
+
 /** Known step handler names offered in the editor's handler picker. */
 export const STEP_HANDLERS: string[] = [
   'log',
@@ -190,6 +213,44 @@ export const STEP_HANDLERS: string[] = [
   'fail',
   'noop',
 ]
+
+/**
+ * One-line business meaning per known step handler — shown next to the Handler
+ * picker so the operator understands what the selected handler does. Unknown
+ * (custom) handlers return undefined so the editor hides the note.
+ */
+export const HANDLER_DESCRIPTION: Record<string, string> = {
+  log: 'Writes a message to the instance log — observability only, no side effects.',
+  sleep: 'Pauses this instance for a fixed duration before continuing.',
+  http_request: 'Makes an outbound HTTP call to an external API and captures the response.',
+  llm_call: 'Calls a large language model with a prompt and returns its completion.',
+  tool_call: 'Invokes a registered tool with arguments.',
+  mcp_call: 'Calls a tool exposed by an MCP server.',
+  agent: 'Runs an autonomous agent loop (model + tools) until it produces a result.',
+  email_send: 'Sends a templated email to one or more recipients.',
+  transform: 'Computes a value from an expression over the workflow context.',
+  assert: 'Fails the workflow unless the given condition holds.',
+  memory_store: 'Persists a value into long-term memory under a key and namespace.',
+  memory_search: 'Semantically searches stored memory and returns the closest matches.',
+  blob_put: 'Uploads binary/blob content to object storage under a key.',
+  blob_get: 'Fetches blob content from object storage by key.',
+  human_review: 'Pauses for a human decision or approval (human-in-the-loop).',
+  emit_event: 'Publishes an event to the bus for other workflows to react to.',
+  send_signal: 'Sends a signal (with payload) to another running instance.',
+  query_instance: 'Reads status and state from another workflow instance.',
+  set_state: 'Writes a key into this instance mutable state.',
+  get_state: 'Reads a key from this instance state.',
+  delete_state: 'Removes a key from this instance state.',
+  merge_state: 'Merges an object into this instance state.',
+  embed: 'Computes a vector embedding for the input text.',
+  fail: 'Deliberately fails this step with a message and code.',
+  noop: 'Does nothing — a placeholder / no-op step.',
+}
+
+/** Business meaning for a known handler, or undefined for an unknown (custom) one. */
+export function handlerDescription(handler: string): string | undefined {
+  return HANDLER_DESCRIPTION[handler]
+}
 
 /**
  * Standard starter `params` template per handler. Selecting a handler in the

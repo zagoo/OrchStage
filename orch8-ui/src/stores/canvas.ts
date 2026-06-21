@@ -21,6 +21,7 @@ import {
   updateBlockConfig,
   updateBlockById,
   renameBlock,
+  addContainerSlot as addContainerSlotOp,
   mapContainers,
   makeStep,
   makeBlockOfType,
@@ -28,6 +29,7 @@ import {
   genBlockId,
   validateSequence,
   type MoveTarget,
+  type AddableSlot,
 } from '@/components/canvas/treeOps'
 
 export const useCanvasStore = defineStore('canvas', () => {
@@ -156,6 +158,16 @@ export const useCanvasStore = defineStore('canvas', () => {
   }
 
   /**
+   * Add a container slot (a parallel/race branch, a router default, or a try_catch
+   * finally) that the block type supports but doesn't yet have. The new empty slot
+   * is then populated with the usual addStepInto.
+   */
+  function addContainerSlot(id: string, slot: AddableSlot) {
+    if (!editable.value) return
+    applyBlocks(addContainerSlotOp(editable.value.definition.blocks, id, slot))
+  }
+
+  /**
    * Rename a block's id (e.g. the editable Block ID field). Uniqueness is
    * pre-checked by the caller; applyBlocks still re-validates so a slipped-through
    * duplicate surfaces as a blockError rather than corrupting the tree.
@@ -236,6 +248,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     updateConfig,
     changeBlockType,
     changeBlockId,
+    addContainerSlot,
     commitSaved,
     markDirty,
     updateEditableBlocks,

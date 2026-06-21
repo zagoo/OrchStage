@@ -14,7 +14,14 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import NodeDetailPanel from './NodeDetailPanel.vue'
 import type { CanvasNodeData } from '@/api/types/canvas'
-import type { StepBlock, RouterBlock, LoopBlock, ABSplitBlock } from '@/api/types/sequences'
+import type {
+  StepBlock,
+  RouterBlock,
+  LoopBlock,
+  ABSplitBlock,
+  ParallelBlock,
+  TryCatchBlock,
+} from '@/api/types/sequences'
 
 const stepNode = (): CanvasNodeData => ({
   block: { type: 'step', id: 's1', handler: 'log', params: { a: 1 }, cancellable: false } as StepBlock,
@@ -61,6 +68,30 @@ const abSplitNode = (): CanvasNodeData => ({
       { name: 'B', weight: 40, blocks: [] },
     ],
   } as ABSplitBlock,
+  depth: 0,
+  indexInDepth: 0,
+})
+
+const parallelNode = (): CanvasNodeData => ({
+  block: { type: 'parallel', id: 'p1', branches: [[]] } as ParallelBlock,
+  depth: 0,
+  indexInDepth: 0,
+})
+
+const routerNoDefault = (): CanvasNodeData => ({
+  block: { type: 'router', id: 'rND', routes: [{ condition: 'c', blocks: [] }] } as RouterBlock,
+  depth: 0,
+  indexInDepth: 0,
+})
+
+const tryCatchNode = (hasFinally = false): CanvasNodeData => ({
+  block: {
+    type: 'try_catch',
+    id: 'tc1',
+    try_block: [{ type: 'step', id: 't', handler: 'log', params: {}, cancellable: false }],
+    catch_block: [],
+    ...(hasFinally ? { finally_block: [] } : {}),
+  } as TryCatchBlock,
   depth: 0,
   indexInDepth: 0,
 })
@@ -293,5 +324,45 @@ describe('NodeDetailPanel', () => {
     const params = wrapper.find('textarea').element.value
     expect(params).toContain('"message"')
     expect(params).toContain('"level"')
+  })
+
+  // --- Add optional container slots: branch / default / finally (Bugs 2-5) ---
+
+  it('Parallel exposes "Add branch" and emits add-container "branch"', async () => {
+    const wrapper = mountPanel(parallelNode())
+    const btn = buttonByText(wrapper, 'Add branch')
+    expect(btn).toBeTruthy()
+    await btn!.trigger('click')
+    expect(wrapper.emitted('add-container')![0]).toEqual(['branch'])
+  })
+
+  it('Router without a default exposes "Add default branch" and emits "default"', async () => {
+    const wrapper = mountPanel(routerNoDefault())
+    const btn = buttonByText(wrapper, 'Add default branch')
+    expect(btn).toBeTruthy()
+    await btn!.trigger('click')
+    expect(wrapper.emitted('add-container')![0]).toEqual(['default'])
+  })
+
+  it('Router that already has a default does NOT offer "Add default branch"', () => {
+    const wrapper = mountPanel(routerNode()) // routerNode() includes a default branch
+    expect(buttonByText(wrapper, 'Add default branch')).toBeFalsy()
+  })
+
+  it('TryCatch exposes "Add finally block" → "finally" (and hides it once present)', async () => {
+    const wrapper = mountPanel(tryCatchNode())
+    const btn = buttonByText(wrapper, 'Add finally block')
+    expect(btn).toBeTruthy()
+    await btn!.trigger('click')
+    expect(wrapper.emitted('add-container')![0]).toEqual(['finally'])
+    expect(buttonByText(mountPanel(tryCatchNode(true)), 'Add finally block')).toBeFalsy()
+  })
+
+  // --- Business-logic descriptions for block type + handler (Bugs 6-7) ---
+
+  it('shows a business-logic description for the selected block type and handler', () => {
+    const t = mountPanel().text() // step node, handler 'log'
+    expect(t, 'block-type description').toContain('single unit of work')
+    expect(t, 'handler description').toContain('observability')
   })
 })

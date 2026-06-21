@@ -10,7 +10,7 @@ import { computed, ref, watch } from 'vue'
 import { Info, Settings, Activity, Pencil, Trash2, ArrowUp, ArrowDown, Plus, FolderInput, Check } from 'lucide-vue-next'
 import type { BlockDefinition, BlockType } from '@/api/types/sequences'
 import type { CanvasNodeData } from '@/api/types/canvas'
-import { getContainers, type MoveTarget, type ContainerRef } from '@/components/canvas/treeOps'
+import { getContainers, type MoveTarget, type ContainerRef, type AddableSlot } from '@/components/canvas/treeOps'
 import {
   BLOCK_VISUAL,
   stepIcon,
@@ -18,6 +18,8 @@ import {
   STEP_HANDLERS,
   HANDLER_PARAM_TEMPLATE,
   STEP_JSON_FIELD_EXAMPLE,
+  blockTypeDescription,
+  handlerDescription,
 } from './blockConfig'
 import JsonExampleControls from './JsonExampleControls.vue'
 import { titleCase, formatDateTime, prettyJson } from '@/lib/format'
@@ -54,6 +56,7 @@ const emit = defineEmits<{
   'insert-after': []
   move: [target: MoveTarget]
   'add-into': [key: string]
+  'add-container': [slot: AddableSlot]
 }>()
 
 const activeTab = ref('config')
@@ -76,6 +79,22 @@ function onTypeChange(t: string | undefined) {
 
 const block = computed(() => props.nodeData?.block ?? null)
 const execNode = computed(() => props.nodeData?.execNode ?? null)
+
+// Optional container slots the block type supports but doesn't have yet — surfaced
+// as "Add …" actions (parallel/race branches are unbounded; router default and
+// try_catch finally are optional single slots). Routes/variants have their own editors.
+const canAddBranch = computed(() => {
+  const t = block.value?.type
+  return t === 'parallel' || t === 'race'
+})
+const canAddDefault = computed(() => {
+  const b = block.value
+  return b?.type === 'router' && !b.default
+})
+const canAddFinally = computed(() => {
+  const b = block.value
+  return b?.type === 'try_catch' && !b.finally_block
+})
 
 // Editable Block ID (top of the panel). Edited locally and committed on Enter /
 // the confirm button; the parent (FlowCanvasView.panelChangeId) validates
@@ -470,7 +489,7 @@ const tabs = [
 
           <!-- Block-type switcher: pick any type; the editor re-renders that type's fields.
                :key forces a re-sync to the live block.type so a blocked change reverts. -->
-          <Field label="Block type" class="mb-3">
+          <Field label="Block type" class="mb-2">
             <Select
               :key="typeSelectNonce"
               :model-value="block.type"
@@ -478,6 +497,11 @@ const tabs = [
               @update:model-value="onTypeChange"
             />
           </Field>
+          <!-- Business-logic explanation of the selected block type -->
+          <div class="mb-3 flex items-start gap-2 rounded-md border border-border bg-surface-2 px-3 py-2 text-[11.5px] text-muted">
+            <Info :size="13" class="mt-0.5 shrink-0 text-subtle" />
+            <span>{{ blockTypeDescription(block.type) }}</span>
+          </div>
 
           <!-- Editable scalar fields -->
           <template v-if="isEditable">
@@ -486,9 +510,17 @@ const tabs = [
             </div>
 
             <template v-if="block.type === 'step'">
-              <Field label="Handler" required class="mb-2.5">
+              <Field label="Handler" required class="mb-1.5">
                 <Select :model-value="form.handler" :options="handlerOptions" @update:model-value="onHandlerSelect" />
               </Field>
+              <!-- Business-logic significance of the selected handler -->
+              <div
+                v-if="handlerDescription(form.handler)"
+                class="mb-2.5 flex items-start gap-2 rounded-md border border-border bg-surface-2 px-3 py-2 text-[11.5px] text-muted"
+              >
+                <Info :size="13" class="mt-0.5 shrink-0 text-subtle" />
+                <span>{{ handlerDescription(form.handler) }}</span>
+              </div>
               <div class="mb-2.5 grid grid-cols-2 gap-2">
                 <Field label="Timeout (ms)"><Input v-model="form.timeout" type="number" placeholder="—" /></Field>
                 <Field label="Queue"><Input v-model="form.queue_name" placeholder="default" /></Field>
@@ -730,6 +762,20 @@ const tabs = [
             </Button>
             <Button variant="secondary" size="sm" @click="emit('insert-after')">
               <template #icon><Plus :size="13" /></template>Insert step after
+            </Button>
+          </div>
+
+          <!-- Add optional container slots the model supports: parallel/race branches,
+               router default, try_catch finally (routes/variants have their own editors). -->
+          <div v-if="canAddBranch || canAddDefault || canAddFinally" class="mb-3 flex flex-wrap gap-2">
+            <Button v-if="canAddBranch" variant="secondary" size="sm" @click="emit('add-container', 'branch')">
+              <template #icon><Plus :size="13" /></template>Add branch
+            </Button>
+            <Button v-if="canAddDefault" variant="secondary" size="sm" @click="emit('add-container', 'default')">
+              <template #icon><Plus :size="13" /></template>Add default branch
+            </Button>
+            <Button v-if="canAddFinally" variant="secondary" size="sm" @click="emit('add-container', 'finally')">
+              <template #icon><Plus :size="13" /></template>Add finally block
             </Button>
           </div>
 

@@ -1,16 +1,13 @@
 <script setup lang="ts">
 /**
  * Toolbar above the Vue Flow canvas.
- * Controls: add step, fit view, auto-layout, toggle minimap, full screen,
- * toggle node title field, save, export JSON.
- * Save is gated on a valid block tree (see validateSequence).
+ * Controls: add step, auto-layout, full screen, toggle node title field,
+ * save, export JSON. Save is gated on a valid block tree (see validateSequence).
  *
  * DESIGN_REFERENCE §dag-sequences.md §9.1 Create Sequence (save)
  */
 import {
-  Maximize2,
   LayoutDashboard,
-  Map,
   Expand,
   Shrink,
   Type,
@@ -29,7 +26,6 @@ import type { NodeTitleField } from './blockConfig'
 defineProps<{
   dirty: boolean
   saving: boolean
-  minimapVisible: boolean
   sequenceLoaded: boolean
   valid: boolean
   fullscreen: boolean
@@ -38,9 +34,7 @@ defineProps<{
 
 const emit = defineEmits<{
   addStep: []
-  fitView: []
   autoLayout: []
-  toggleMinimap: []
   toggleFullscreen: []
   toggleNodeTitle: []
   save: []
@@ -59,18 +53,8 @@ const emit = defineEmits<{
     <div class="mx-1 h-5 w-px bg-border" aria-hidden="true" />
 
     <!-- View controls -->
-    <IconButton label="Fit view (ctrl+shift+F)" @click="emit('fitView')" :disabled="!sequenceLoaded">
-      <Maximize2 :size="15" />
-    </IconButton>
     <IconButton label="Auto-layout nodes" @click="emit('autoLayout')" :disabled="!sequenceLoaded">
       <LayoutDashboard :size="15" />
-    </IconButton>
-    <IconButton
-      label="Toggle minimap"
-      @click="emit('toggleMinimap')"
-      :class="minimapVisible ? 'bg-accent-soft text-accent' : ''"
-    >
-      <Map :size="15" />
     </IconButton>
     <IconButton
       :label="nodeTitleField === 'id' ? 'Node titles: IDs (click to show names)' : 'Node titles: names (click to show IDs)'"

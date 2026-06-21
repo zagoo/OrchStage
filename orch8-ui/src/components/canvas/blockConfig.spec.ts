@@ -4,7 +4,17 @@
  * here in source, and every handler param template must be valid JSON.
  */
 import { describe, it, expect } from 'vitest'
-import { STEP_JSON_FIELD_EXAMPLE, HANDLER_PARAM_TEMPLATE, STEP_HANDLERS } from './blockConfig'
+import type { BlockType } from '@/api/types/sequences'
+import {
+  STEP_JSON_FIELD_EXAMPLE,
+  HANDLER_PARAM_TEMPLATE,
+  STEP_HANDLERS,
+  BLOCK_VISUAL,
+  BLOCK_TYPE_DESCRIPTION,
+  blockTypeDescription,
+  HANDLER_DESCRIPTION,
+  handlerDescription,
+} from './blockConfig'
 
 describe('STEP_JSON_FIELD_EXAMPLE — complete advanced-field examples', () => {
   it('covers every advanced step JSON field', () => {
@@ -43,5 +53,25 @@ describe('STEP_JSON_FIELD_EXAMPLE — complete advanced-field examples', () => {
     for (const h of STEP_HANDLERS) {
       expect(HANDLER_PARAM_TEMPLATE[h], `template for ${h}`).toBeDefined()
     }
+  })
+})
+
+describe('business-logic descriptions (block type + handler)', () => {
+  it('has a meaningful description for EVERY block type', () => {
+    for (const t of Object.keys(BLOCK_VISUAL) as BlockType[]) {
+      expect(BLOCK_TYPE_DESCRIPTION[t], t).toBeTruthy()
+      expect(blockTypeDescription(t).length, t).toBeGreaterThan(15)
+    }
+  })
+
+  it('has a description for every known handler', () => {
+    for (const h of STEP_HANDLERS) {
+      expect(HANDLER_DESCRIPTION[h], h).toBeTruthy()
+      expect(handlerDescription(h)!.length, h).toBeGreaterThan(10)
+    }
+  })
+
+  it('handlerDescription returns undefined for an unknown/custom handler', () => {
+    expect(handlerDescription('totally_custom_handler')).toBeUndefined()
   })
 })
