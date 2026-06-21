@@ -14,7 +14,7 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import NodeDetailPanel from './NodeDetailPanel.vue'
 import type { CanvasNodeData } from '@/api/types/canvas'
-import type { StepBlock, RouterBlock } from '@/api/types/sequences'
+import type { StepBlock, RouterBlock, LoopBlock, ABSplitBlock } from '@/api/types/sequences'
 
 const stepNode = (): CanvasNodeData => ({
   block: { type: 'step', id: 's1', handler: 'log', params: { a: 1 }, cancellable: false } as StepBlock,
@@ -35,6 +35,32 @@ const routerNode = (): CanvasNodeData => ({
     routes: [{ condition: 'a == 1', blocks: [] }],
     default: [{ type: 'step', id: 'd1', handler: 'log', params: {}, cancellable: false }],
   } as RouterBlock,
+  depth: 0,
+  indexInDepth: 0,
+})
+
+const loopNode = (): CanvasNodeData => ({
+  block: {
+    type: 'loop',
+    id: 'l1',
+    condition: 'x < 3',
+    body: [{ type: 'step', id: 'b1', handler: 'log', params: {}, cancellable: false }],
+    max_iterations: 5,
+    continue_on_error: false,
+  } as LoopBlock,
+  depth: 0,
+  indexInDepth: 0,
+})
+
+const abSplitNode = (): CanvasNodeData => ({
+  block: {
+    type: 'a_b_split',
+    id: 'ab1',
+    variants: [
+      { name: 'A', weight: 60, blocks: [] },
+      { name: 'B', weight: 40, blocks: [] },
+    ],
+  } as ABSplitBlock,
   depth: 0,
   indexInDepth: 0,
 })
@@ -168,5 +194,61 @@ describe('NodeDetailPanel', () => {
     await buttonByText(wrapper, 'Apply changes')!.trigger('click')
     const patch = wrapper.emitted('update-config')![0]![0] as Record<string, unknown>
     expect((patch.routes as unknown[]).length).toBe(2)
+  })
+
+  // --- Complete field rendering for every block type (Bug 1) ---
+
+  it('renders the COMPLETE StepBlock field set', () => {
+    const t = mountPanel().text()
+    for (const label of [
+      'Handler',
+      'Timeout',
+      'Queue',
+      'Rate-limit key',
+      'Cancellable',
+      'Params',
+      'Deadline',
+      'Fallback handler',
+      'Cache key',
+      'Retry policy',
+      'Delay',
+      'Send window',
+      'Context access',
+      'Wait for input',
+      'On deadline breach',
+    ]) {
+      expect(t, `step panel should render "${label}"`).toContain(label)
+    }
+  })
+
+  it('parses and applies an advanced step JSON field (retry policy)', async () => {
+    const wrapper = mountPanel(stepNodeEmptyParams())
+    const retry = wrapper.findAll('textarea').find((a) => (a.attributes('placeholder') ?? '').includes('max_attempts'))
+    expect(retry).toBeTruthy()
+    await retry!.setValue('{"max_attempts":5,"initial_backoff":2,"max_backoff":30,"backoff_multiplier":2}')
+    await buttonByText(wrapper, 'Apply changes')!.trigger('click')
+    const patch = wrapper.emitted('update-config')!.at(-1)![0] as Record<string, unknown>
+    expect((patch.retry as Record<string, unknown>).max_attempts).toBe(5)
+  })
+
+  it('applies the loop continue_on_error flag + required max_iterations', async () => {
+    const wrapper = mountPanel(loopNode())
+    await wrapper.find('input[type="checkbox"]').setValue(true)
+    await buttonByText(wrapper, 'Apply changes')!.trigger('click')
+    const patch = wrapper.emitted('update-config')![0]![0] as Record<string, unknown>
+    expect(patch.continue_on_error).toBe(true)
+    expect(patch.max_iterations).toBe(5)
+  })
+
+  it('renders + applies a_b_split variant name/weight (number coercion)', async () => {
+    const wrapper = mountPanel(abSplitNode())
+    expect(wrapper.text()).toContain('Variant 1')
+    expect(wrapper.text()).toContain('Variant 2')
+    await buttonByText(wrapper, 'Apply changes')!.trigger('click')
+    const patch = wrapper.emitted('update-config')![0]![0] as Record<string, unknown>
+    expect(patch.variants).toEqual([
+      { name: 'A', weight: 60, blocks: [] },
+      { name: 'B', weight: 40, blocks: [] },
+    ])
   })
 })

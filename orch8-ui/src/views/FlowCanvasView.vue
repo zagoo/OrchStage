@@ -52,6 +52,8 @@ import {
   type MoveTarget,
   type ContainerRef,
 } from '@/components/canvas/treeOps'
+import { canFollow, validateWorkflow } from '@/components/canvas/blockRules'
+import { BLOCK_VISUAL } from '@/components/canvas/blockConfig'
 import type { CanvasNodeData } from '@/api/types/canvas'
 import type { SequenceDefinition, BlockDefinition, BlockType } from '@/api/types/sequences'
 import type { ExecutionNode } from '@/api/types/instances'
@@ -377,7 +379,35 @@ function panelUpdateConfig(patch: Record<string, unknown>) {
   if (selectedNodeId.value) canvas.updateConfig(selectedNodeId.value, patch)
 }
 function panelChangeType(newType: BlockType) {
-  if (selectedNodeId.value) canvas.changeBlockType(selectedNodeId.value, newType)
+  const id = selectedNodeId.value
+  if (!id) return
+  const parent = findParent(canvas.blocks, id)
+  // STRICT entry-point rule: the workflow's first (root-level) block must stay a Step.
+  if (parent && parent.parentId === null && parent.index === 0 && newType !== 'step') {
+    ui.error(
+      'Invalid first block',
+      `The first block of a workflow must be a ${BLOCK_VISUAL.step.label}. ` +
+        'Add a step before it, or change a later block instead.',
+    )
+    return
+  }
+  // 2.1 STRICT upstream check: the immediate predecessor must accept the new type as
+  // a successor. If not, block the mutation entirely and surface a toast — the type
+  // Select reverts on its own because it's bound to the (unchanged) live block.type.
+  if (parent && parent.index > 0) {
+    const upstream = parent.siblings[parent.index - 1]
+    if (!canFollow(upstream.type, newType)) {
+      ui.error(
+        'Incompatible block sequence',
+        `A ${BLOCK_VISUAL[newType].label} can't directly follow a ${BLOCK_VISUAL[upstream.type].label}. ` +
+          'Insert a step between them to converge first.',
+      )
+      return
+    }
+  }
+  // 2.2 Downstream successors are intentionally NOT checked here — the user re-wires
+  // them freely; any incompatibility is caught later by the global Save gate (2.3).
+  canvas.changeBlockType(id, newType)
 }
 function panelDelete() {
   if (selectedNodeId.value) canvas.removeBlock(selectedNodeId.value)
@@ -424,6 +454,22 @@ async function handleSave() {
 
   if (!canvas.isValid) {
     ui.error('Cannot save', 'Resolve the highlighted validation errors before saving.')
+    return
+  }
+
+  // 2.3 STRICT global save gate: a comprehensive end-to-end check of the whole DAG —
+  // the entry-point rule plus every adjacent pair (including ones the lax downstream
+  // rule (2.2) let through earlier). Any violation blocks the save completely.
+  const violations = validateWorkflow(canvas.blocks)
+  if (violations.length > 0) {
+    const v = violations[0]
+    const more = violations.length > 1 ? ` (and ${violations.length - 1} more)` : ''
+    const detail =
+      v.kind === 'first-block'
+        ? `The first block must be a ${BLOCK_VISUAL.step.label}, but it is a ${BLOCK_VISUAL[v.blockType].label} (${v.blockId})${more}.`
+        : `${BLOCK_VISUAL[v.downstreamType].label} can't directly follow ${BLOCK_VISUAL[v.upstreamType].label} ` +
+          `(${v.upstreamId} → ${v.downstreamId})${more}. Insert a step to converge.`
+    ui.error('Cannot save — invalid workflow', detail)
     return
   }
 

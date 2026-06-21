@@ -53,7 +53,13 @@ const blockTypeOptions = (Object.keys(BLOCK_VISUAL) as BlockType[]).map((t) => (
   value: t,
   label: BLOCK_VISUAL[t].label,
 }))
+// Bumped on every pick to force the type Select to remount and re-read the live
+// block.type. Without this, a change the parent BLOCKS (incompatible upstream) would
+// leave the Select stuck on the rejected value (defineModel keeps its local state
+// when the one-way :model-value prop doesn't move). Remounting snaps it back.
+const typeSelectNonce = ref(0)
 function onTypeChange(t: string | undefined) {
+  typeSelectNonce.value++
   if (block.value && t && t !== block.value.type) emit('change-type', t as BlockType)
 }
 
@@ -69,6 +75,7 @@ const editableTypes = new Set<BlockDefinition['type']>([
   'for_each',
   'race',
   'router',
+  'a_b_split',
 ])
 const isEditable = computed(() => (block.value ? editableTypes.has(block.value.type) : false))
 
@@ -99,8 +106,12 @@ const stateTone = computed(() => {
 // --- editable form (synced from the live block) ------------------------------
 const form = ref<Record<string, string>>({})
 const cancellable = ref(false)
-const jsonError = ref<string | null>(null)
+const continueOnError = ref(false)
+/** Per-JSON-field parse errors keyed by form key, so each editor surfaces its own. */
+const jsonErrors = ref<Record<string, string>>({})
 const moveSel = ref('')
+/** A/B-split variants — name + weight are scalar config; blocks stay structural. */
+const variantForm = ref<{ name: string; weight: string; blocks: BlockDefinition[] }[]>([])
 /** Router routes — edited as a list (condition is scalar config; blocks stay structural). */
 const routeForm = ref<{ condition: string; blocks: BlockDefinition[] }[]>([])
 const hasDefault = ref(false)
@@ -151,10 +162,12 @@ function applyTemplateOffer() {
 }
 
 function populate(b: BlockDefinition | null) {
-  jsonError.value = null
+  jsonErrors.value = {}
   moveSel.value = ''
   routeForm.value = []
+  variantForm.value = []
   hasDefault.value = false
+  continueOnError.value = false
   // Loaded Params are real content, not an auto-fill — don't let the next handler
   // change silently clobber them, and clear any stale template offer.
   autoFilledParams.value = null
@@ -172,6 +185,15 @@ function populate(b: BlockDefinition | null) {
         queue_name: b.queue_name ?? '',
         rate_limit_key: b.rate_limit_key ?? '',
         params: prettyJson(b.params ?? {}),
+        delay: b.delay ? prettyJson(b.delay) : '',
+        retry: b.retry ? prettyJson(b.retry) : '',
+        send_window: b.send_window ? prettyJson(b.send_window) : '',
+        context_access: b.context_access ? prettyJson(b.context_access) : '',
+        wait_for_input: b.wait_for_input ? prettyJson(b.wait_for_input) : '',
+        deadline: b.deadline != null ? String(b.deadline) : '',
+        on_deadline_breach: b.on_deadline_breach ? prettyJson(b.on_deadline_breach) : '',
+        fallback_handler: b.fallback_handler ?? '',
+        cache_key: b.cache_key ?? '',
       }
       break
     case 'sub_sequence':
@@ -182,10 +204,22 @@ function populate(b: BlockDefinition | null) {
       }
       break
     case 'loop':
-      form.value = { condition: b.condition, max_iterations: String(b.max_iterations) }
+      continueOnError.value = b.continue_on_error
+      form.value = {
+        condition: b.condition,
+        max_iterations: String(b.max_iterations),
+        break_on: b.break_on ?? '',
+        poll_interval: b.poll_interval != null ? String(b.poll_interval) : '',
+        retain_iterations: b.retain_iterations != null ? String(b.retain_iterations) : '',
+      }
       break
     case 'for_each':
-      form.value = { collection: b.collection, item_var: b.item_var, max_iterations: String(b.max_iterations) }
+      form.value = {
+        collection: b.collection,
+        item_var: b.item_var,
+        max_iterations: String(b.max_iterations),
+        retain_iterations: b.retain_iterations != null ? String(b.retain_iterations) : '',
+      }
       break
     case 'race':
       form.value = { semantics: b.semantics }
@@ -193,6 +227,10 @@ function populate(b: BlockDefinition | null) {
     case 'router':
       routeForm.value = b.routes.map((r) => ({ condition: r.condition, blocks: r.blocks }))
       hasDefault.value = !!b.default
+      form.value = {}
+      break
+    case 'a_b_split':
+      variantForm.value = b.variants.map((v) => ({ name: v.name, weight: String(v.weight), blocks: v.blocks }))
       form.value = {}
       break
     default:
@@ -213,45 +251,81 @@ function applyConfig() {
   if (!b) return
   const f = form.value
   const patch: Record<string, unknown> = {}
-  jsonError.value = null
-  try {
-    switch (b.type) {
-      case 'step':
-        patch.handler = String(f.handler ?? '')
-        patch.timeout = f.timeout === '' || f.timeout == null ? undefined : Number(f.timeout)
-        patch.queue_name = f.queue_name ? String(f.queue_name) : undefined
-        patch.rate_limit_key = f.rate_limit_key ? String(f.rate_limit_key) : undefined
-        patch.cancellable = cancellable.value
-        patch.params = JSON.parse(String(f.params || '{}'))
-        break
-      case 'sub_sequence':
-        patch.sequence_name = String(f.sequence_name ?? '')
-        patch.version = f.version === '' || f.version == null ? undefined : Number(f.version)
-        patch.input = JSON.parse(String(f.input || '{}'))
-        break
-      case 'loop':
-        patch.condition = String(f.condition ?? '')
-        patch.max_iterations = Number(f.max_iterations)
-        break
-      case 'for_each':
-        patch.collection = String(f.collection ?? '')
-        patch.item_var = String(f.item_var ?? '')
-        patch.max_iterations = Number(f.max_iterations)
-        break
-      case 'race':
-        patch.semantics = f.semantics
-        break
-      case 'router':
-        // Conditions are scalar config edited here; each route's child blocks are
-        // preserved as-is (edited structurally on the canvas). `default` is left
-        // untouched by omitting it from the patch (shallow-merge keeps it).
-        patch.routes = routeForm.value.map((r) => ({ condition: r.condition.trim(), blocks: r.blocks }))
-        break
-    }
-  } catch {
-    jsonError.value = 'Invalid JSON — fix the highlighted field before applying.'
-    return
+  jsonErrors.value = {}
+
+  // Typed helpers over the flat string form. Optional scalars become `undefined`
+  // when blank (shallow-merge + JSON.stringify then drop them). JSON fields record
+  // a per-field error on parse failure so the matching editor highlights.
+  const numOf = (k: string): number | undefined => {
+    const s = (f[k] ?? '').trim()
+    return s === '' ? undefined : Number(s)
   }
+  const strOf = (k: string): string | undefined => (f[k] ? String(f[k]) : undefined)
+  const jsonOf = (k: string, required = false): unknown => {
+    const s = (f[k] ?? '').trim()
+    if (s === '') return required ? {} : undefined
+    try {
+      return JSON.parse(s)
+    } catch {
+      jsonErrors.value[k] = 'Invalid JSON'
+      return undefined
+    }
+  }
+
+  switch (b.type) {
+    case 'step':
+      patch.handler = String(f.handler ?? '')
+      patch.timeout = numOf('timeout')
+      patch.queue_name = strOf('queue_name')
+      patch.rate_limit_key = strOf('rate_limit_key')
+      patch.cancellable = cancellable.value
+      patch.params = jsonOf('params', true)
+      patch.delay = jsonOf('delay')
+      patch.retry = jsonOf('retry')
+      patch.send_window = jsonOf('send_window')
+      patch.context_access = jsonOf('context_access')
+      patch.wait_for_input = jsonOf('wait_for_input')
+      patch.deadline = numOf('deadline')
+      patch.on_deadline_breach = jsonOf('on_deadline_breach')
+      patch.fallback_handler = strOf('fallback_handler')
+      patch.cache_key = strOf('cache_key')
+      break
+    case 'sub_sequence':
+      patch.sequence_name = String(f.sequence_name ?? '')
+      patch.version = numOf('version')
+      patch.input = jsonOf('input', true)
+      break
+    case 'loop':
+      patch.condition = String(f.condition ?? '')
+      patch.max_iterations = Number(f.max_iterations)
+      patch.continue_on_error = continueOnError.value
+      patch.break_on = strOf('break_on')
+      patch.poll_interval = numOf('poll_interval')
+      patch.retain_iterations = numOf('retain_iterations')
+      break
+    case 'for_each':
+      patch.collection = String(f.collection ?? '')
+      patch.item_var = String(f.item_var ?? '')
+      patch.max_iterations = Number(f.max_iterations)
+      patch.retain_iterations = numOf('retain_iterations')
+      break
+    case 'race':
+      patch.semantics = f.semantics
+      break
+    case 'router':
+      // Conditions are scalar config edited here; each route's child blocks are
+      // preserved as-is (edited structurally on the canvas). `default` is left
+      // untouched by omitting it from the patch (shallow-merge keeps it).
+      patch.routes = routeForm.value.map((r) => ({ condition: r.condition.trim(), blocks: r.blocks }))
+      break
+    case 'a_b_split':
+      // Name + weight are scalar config; each variant's blocks are edited on canvas.
+      patch.variants = variantForm.value.map((v) => ({ name: v.name, weight: Number(v.weight), blocks: v.blocks }))
+      break
+  }
+
+  // A JSON field failed to parse — keep the panel open with field-level errors.
+  if (Object.keys(jsonErrors.value).length > 0) return
   emit('update-config', patch)
 }
 
@@ -260,6 +334,13 @@ function addRoute() {
 }
 function removeRoute(i: number) {
   routeForm.value.splice(i, 1)
+}
+
+function addVariant() {
+  variantForm.value.push({ name: '', weight: '0', blocks: [] })
+}
+function removeVariant(i: number) {
+  variantForm.value.splice(i, 1)
 }
 
 function onMoveSelect(value: string) {
@@ -313,9 +394,15 @@ const tabs = [
       <div v-show="activeTab === 'config'">
           <KeyValue label="Block ID" :value="block.id" mono class="mb-3" />
 
-          <!-- Block-type switcher: pick any type; the editor re-renders that type's fields. -->
+          <!-- Block-type switcher: pick any type; the editor re-renders that type's fields.
+               :key forces a re-sync to the live block.type so a blocked change reverts. -->
           <Field label="Block type" class="mb-3">
-            <Select :model-value="block.type" :options="blockTypeOptions" @update:model-value="onTypeChange" />
+            <Select
+              :key="typeSelectNonce"
+              :model-value="block.type"
+              :options="blockTypeOptions"
+              @update:model-value="onTypeChange"
+            />
           </Field>
 
           <!-- Editable scalar fields -->
@@ -337,7 +424,7 @@ const tabs = [
                 <input type="checkbox" v-model="cancellable" class="accent-[var(--accent)]" />
                 Cancellable
               </label>
-              <Field label="Params (JSON)" :error="jsonError ?? undefined" class="mb-3">
+              <Field label="Params (JSON)" :error="jsonErrors.params" class="mb-3">
                 <Textarea v-model="form.params" :rows="6" class="mono text-[12px]" />
               </Field>
               <!-- Safeguard: a handler change never silently wipes custom Params —
@@ -355,25 +442,94 @@ const tabs = [
                   instead?
                 </span>
               </div>
+
+              <!-- Advanced step fields (all optional) — typed sub-objects edited as
+                   JSON, mirroring the Params editor; placeholders show their shape. -->
+              <div class="mb-2 mt-1 text-[11px] font-medium uppercase tracking-wider text-faint">Advanced (optional)</div>
+              <div class="mb-2.5 grid grid-cols-2 gap-2">
+                <Field label="Deadline (ms)"><Input v-model="form.deadline" type="number" placeholder="—" /></Field>
+                <Field label="Fallback handler"><Input v-model="form.fallback_handler" placeholder="—" /></Field>
+              </div>
+              <Field label="Cache key" class="mb-2.5"><Input v-model="form.cache_key" placeholder="—" /></Field>
+              <Field label="Retry policy (JSON)" :error="jsonErrors.retry" class="mb-2.5">
+                <Textarea
+                  v-model="form.retry"
+                  :rows="4"
+                  class="mono text-[12px]"
+                  placeholder='{ "max_attempts": 3, "initial_backoff": 1, "max_backoff": 60, "backoff_multiplier": 2 }'
+                />
+              </Field>
+              <Field label="Delay (JSON)" :error="jsonErrors.delay" class="mb-2.5">
+                <Textarea
+                  v-model="form.delay"
+                  :rows="3"
+                  class="mono text-[12px]"
+                  placeholder='{ "duration": 0, "business_days_only": false, "holidays": [] }'
+                />
+              </Field>
+              <Field label="Send window (JSON)" :error="jsonErrors.send_window" class="mb-2.5">
+                <Textarea
+                  v-model="form.send_window"
+                  :rows="3"
+                  class="mono text-[12px]"
+                  placeholder='{ "start_hour": 9, "end_hour": 17, "days": [1, 2, 3, 4, 5] }'
+                />
+              </Field>
+              <Field label="Context access (JSON)" :error="jsonErrors.context_access" class="mb-2.5">
+                <Textarea
+                  v-model="form.context_access"
+                  :rows="3"
+                  class="mono text-[12px]"
+                  placeholder='{ "data": "all", "config": false, "audit": false, "runtime": false }'
+                />
+              </Field>
+              <Field label="Wait for input (JSON)" :error="jsonErrors.wait_for_input" class="mb-2.5">
+                <Textarea
+                  v-model="form.wait_for_input"
+                  :rows="4"
+                  class="mono text-[12px]"
+                  placeholder='{ "prompt": "", "allow_comment": true }'
+                />
+              </Field>
+              <Field label="On deadline breach (JSON)" :error="jsonErrors.on_deadline_breach" class="mb-3">
+                <Textarea
+                  v-model="form.on_deadline_breach"
+                  :rows="3"
+                  class="mono text-[12px]"
+                  placeholder='{ "handler": "", "params": {} }'
+                />
+              </Field>
             </template>
 
             <template v-else-if="block.type === 'sub_sequence'">
               <Field label="Sequence name" required class="mb-2.5"><Input v-model="form.sequence_name" /></Field>
               <Field label="Version" class="mb-2.5"><Input v-model="form.version" type="number" placeholder="latest" /></Field>
-              <Field label="Input (JSON)" :error="jsonError ?? undefined" class="mb-3">
+              <Field label="Input (JSON)" :error="jsonErrors.input" class="mb-3">
                 <Textarea v-model="form.input" :rows="5" class="mono text-[12px]" />
               </Field>
             </template>
 
             <template v-else-if="block.type === 'loop'">
               <Field label="Condition" required class="mb-2.5"><Input v-model="form.condition" placeholder="data.count < 10" /></Field>
-              <Field label="Max iterations" class="mb-3"><Input v-model="form.max_iterations" type="number" /></Field>
+              <Field label="Max iterations" required class="mb-2.5"><Input v-model="form.max_iterations" type="number" /></Field>
+              <label class="mb-2.5 flex items-center gap-2 text-[12.5px] text-text">
+                <input type="checkbox" v-model="continueOnError" class="accent-[var(--accent)]" />
+                Continue on error
+              </label>
+              <Field label="Break on" class="mb-2.5"><Input v-model="form.break_on" placeholder="—" /></Field>
+              <div class="mb-3 grid grid-cols-2 gap-2">
+                <Field label="Poll interval (ms)"><Input v-model="form.poll_interval" type="number" placeholder="—" /></Field>
+                <Field label="Retain iterations"><Input v-model="form.retain_iterations" type="number" placeholder="—" /></Field>
+              </div>
             </template>
 
             <template v-else-if="block.type === 'for_each'">
               <Field label="Collection" required class="mb-2.5"><Input v-model="form.collection" placeholder="data.items" /></Field>
               <Field label="Item variable" required class="mb-2.5"><Input v-model="form.item_var" placeholder="item" /></Field>
-              <Field label="Max iterations" class="mb-3"><Input v-model="form.max_iterations" type="number" /></Field>
+              <div class="mb-3 grid grid-cols-2 gap-2">
+                <Field label="Max iterations" required><Input v-model="form.max_iterations" type="number" /></Field>
+                <Field label="Retain iterations"><Input v-model="form.retain_iterations" type="number" placeholder="—" /></Field>
+              </div>
             </template>
 
             <template v-else-if="block.type === 'race'">
@@ -424,6 +580,36 @@ const tabs = [
                 A <span class="font-medium text-text">default</span> branch handles the no-match case — edit its steps on
                 the canvas.
               </p>
+            </template>
+
+            <template v-else-if="block.type === 'a_b_split'">
+              <p class="mb-2.5 text-[12px] text-muted">
+                Variants are weighted; each variant's steps are edited on the canvas.
+              </p>
+              <div
+                v-for="(v, i) in variantForm"
+                :key="i"
+                class="mb-2.5 rounded-md border border-border bg-surface-2 px-3 py-2.5"
+              >
+                <div class="mb-1.5 flex items-center justify-between">
+                  <span class="text-[11px] font-medium uppercase tracking-wider text-muted">Variant {{ i + 1 }}</span>
+                  <button
+                    class="rounded p-0.5 text-faint transition-colors hover:text-danger disabled:cursor-not-allowed disabled:opacity-40"
+                    :disabled="variantForm.length <= 2"
+                    title="Remove variant"
+                    @click="removeVariant(i)"
+                  >
+                    <Trash2 :size="13" />
+                  </button>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                  <Field label="Name" required><Input v-model="v.name" placeholder="A" /></Field>
+                  <Field label="Weight" required><Input v-model="v.weight" type="number" placeholder="50" /></Field>
+                </div>
+              </div>
+              <Button variant="secondary" size="sm" class="mb-3" @click="addVariant">
+                <template #icon><Plus :size="13" /></template>Add variant
+              </Button>
             </template>
 
             <Button variant="primary" size="sm" class="mb-4 w-full" @click="applyConfig">
