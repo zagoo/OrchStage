@@ -93,28 +93,40 @@ export interface PersistResult {
   warnings?: string[]
 }
 
+export interface PersistOptions {
+  /**
+   * Force the save mode. Defaults to status-based: `production` → new-version,
+   * everything else → overwrite. Pass `'overwrite'` to let a production sequence
+   * overwrite in place (e.g. a non-workflow change the user chose to overwrite).
+   */
+  mode?: SaveMode
+  signal?: AbortSignal
+}
+
 /**
- * Persist canvas edits, choosing HOW from the sequence's status:
+ * Persist canvas edits in one of two modes (see PersistOptions.mode for how the
+ * default is chosen):
  *
- *  - production → FORK a new version. The server's primary key is `sequences.id`,
+ *  - new-version → FORK a new version. The server's primary key is `sequences.id`,
  *    so the new row MUST get a FRESH id — reusing it returns 409 "UNIQUE
- *    constraint failed: sequences.id" (the reported production-save bug). The live
- *    production version is left intact.
- *  - draft | staging | unpublished → OVERWRITE in place at the SAME id + version.
- *    The server exposes no PUT/upsert, so overwrite = DELETE the row then re-create
- *    it. On a failed re-create we restore `original` so a transient error never
- *    strands the user with a deleted sequence.
+ *    constraint failed: sequences.id". The current version is left intact.
+ *  - overwrite → replace the row at the SAME id + version. The server exposes no
+ *    PUT/upsert, so overwrite = DELETE the row then re-create it. On a failed
+ *    re-create we restore `original` so a transient error never strands the user
+ *    with a deleted sequence.
  *
  * Verified against the live server (DESIGN_REFERENCE §dag-sequences.md §9.1).
  */
 export async function persistSequenceEdit(
   edited: SequenceDefinition,
   original: SequenceDefinition,
-  signal?: AbortSignal,
+  opts: PersistOptions = {},
 ): Promise<PersistResult> {
+  const { signal } = opts
   const now = new Date().toISOString()
+  const mode: SaveMode = opts.mode ?? (edited.status === 'production' ? 'new-version' : 'overwrite')
 
-  if (edited.status === 'production') {
+  if (mode === 'new-version') {
     const saved: SequenceDefinition = { ...edited, id: genUuid(), version: edited.version + 1, created_at: now }
     const res = await createSequence(saved, signal)
     return { mode: 'new-version', saved: { ...saved, id: res.id }, warnings: res.warnings }

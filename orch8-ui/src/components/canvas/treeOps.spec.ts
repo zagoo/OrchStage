@@ -32,6 +32,7 @@ import {
   deleteBlock,
   updateBlockConfig,
   renameBlock,
+  blocksEqualIgnoringIds,
   reorderSibling,
   moveBlock,
   makeBlockOfType,
@@ -405,5 +406,35 @@ describe('renameBlock', () => {
   it('is identity when the id is not found', () => {
     const tree = [step('a')]
     expect(renameBlock(tree, 'nope', 'x')).toEqual(tree)
+  })
+})
+
+// --- blocksEqualIgnoringIds (non-workflow change detector) --------------------
+describe('blocksEqualIgnoringIds', () => {
+  it('true for identical trees', () => {
+    expect(blocksEqualIgnoringIds([step('a'), step('b')], [step('a'), step('b')])).toBe(true)
+  })
+
+  it('true when ONLY block ids differ — a pure rename, nested too', () => {
+    const a = [parallel('p', [step('x')], [step('y')]), router('rt', [{ condition: 'c', blocks: [step('q')] }])]
+    const b = [parallel('P', [step('X')], [step('Y')]), router('RT', [{ condition: 'c', blocks: [step('Q')] }])]
+    expect(blocksEqualIgnoringIds(a, b)).toBe(true)
+  })
+
+  it('false when per-block config differs (handler) — a real workflow change', () => {
+    expect(blocksEqualIgnoringIds([step('a', 'log')], [step('a', 'http')])).toBe(false)
+  })
+
+  it('false when a router CONDITION differs (behaviour change, not a rename)', () => {
+    const a = [router('rt', [{ condition: 'opened == true', blocks: [] }])]
+    const b = [router('rt', [{ condition: 'opened == false', blocks: [] }])]
+    expect(blocksEqualIgnoringIds(a, b)).toBe(false)
+  })
+
+  it('false when structure differs (added / removed / reordered)', () => {
+    expect(blocksEqualIgnoringIds([step('a')], [step('a'), step('b')])).toBe(false)
+    expect(
+      blocksEqualIgnoringIds([step('a'), parallel('p', [step('x')])], [step('a'), parallel('p', [])]),
+    ).toBe(false)
   })
 })

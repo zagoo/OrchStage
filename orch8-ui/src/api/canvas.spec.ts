@@ -382,4 +382,36 @@ describe('persistSequenceEdit', () => {
     expect(restored.id).toBe('y') // the original is put back
     expect(restored.version).toBe(2)
   })
+
+  it('mode:"overwrite" overrides the production default → overwrites in place (no fork)', async () => {
+    const def = makeSeqDef({ status: 'production', version: 4, id: 'prod-keep' })
+    const fetchMock = mockFetchSeq({ status: 204 }, { status: 201, body: { id: 'prod-keep' } })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await persistSequenceEdit(def, def, { mode: 'overwrite' })
+
+    expect(res.mode).toBe('overwrite')
+    expect(res.saved.version).toBe(4) // NOT bumped
+    const calls = fetchMock.mock.calls as Array<[string, RequestInit]>
+    expect((calls[0][1].method as string).toUpperCase()).toBe('DELETE')
+    expect(calls[0][0]).toContain('/api/v1/sequences/prod-keep')
+    const sent = JSON.parse(calls[1][1].body as string) as Record<string, unknown>
+    expect(sent.id).toBe('prod-keep') // same id reused after the delete freed it
+    expect(sent.version).toBe(4)
+  })
+
+  it('mode:"new-version" overrides the non-production default → forks a fresh id', async () => {
+    const def = makeSeqDef({ status: 'draft', version: 1, id: 'draft-x' })
+    const fetchMock = mockFetchSeq({ status: 201, body: { id: 'echo' } })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await persistSequenceEdit(def, def, { mode: 'new-version' })
+
+    expect(res.mode).toBe('new-version')
+    expect(res.saved.version).toBe(2)
+    const calls = fetchMock.mock.calls as Array<[string, RequestInit]>
+    expect(calls).toHaveLength(1) // no DELETE
+    const sent = JSON.parse(calls[0][1].body as string) as Record<string, unknown>
+    expect(sent.id).not.toBe('draft-x')
+  })
 })

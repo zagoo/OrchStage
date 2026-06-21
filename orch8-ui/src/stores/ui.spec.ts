@@ -225,5 +225,36 @@ describe('useUiStore', () => {
       const store = useUiStore()
       expect(() => store.resolveConfirm(true)).not.toThrow()
     })
+
+    // --- tri-state confirmChoice (alternate action) ---
+
+    it('confirmChoice exposes altText and resolves "alt" for the alternate action', async () => {
+      const store = useUiStore()
+      const p = store.confirmChoice({ title: 'Save', message: 'M', altText: 'Overwrite', confirmText: 'New version' })
+      expect(store.confirmState.altText).toBe('Overwrite')
+      store.resolveConfirm('alt')
+      await expect(p).resolves.toBe('alt')
+      expect(store.confirmState.open).toBe(false)
+    })
+
+    it('confirmChoice resolves "confirm" and "cancel" for the primary/cancel actions', async () => {
+      const store = useUiStore()
+      const p1 = store.confirmChoice({ title: 'T', message: 'M' })
+      store.resolveConfirm('confirm')
+      await expect(p1).resolves.toBe('confirm')
+      const p2 = store.confirmChoice({ title: 'T', message: 'M' })
+      store.resolveConfirm('cancel')
+      await expect(p2).resolves.toBe('cancel')
+    })
+
+    it('confirm() maps the primary action to true and the alt action to false', async () => {
+      const store = useUiStore()
+      const p1 = store.confirm({ title: 'T', message: 'M' })
+      store.resolveConfirm('confirm')
+      await expect(p1).resolves.toBe(true)
+      const p2 = store.confirm({ title: 'T', message: 'M' })
+      store.resolveConfirm('alt')
+      await expect(p2).resolves.toBe(false)
+    })
   })
 })

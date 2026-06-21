@@ -39,7 +39,7 @@ import { useCanvasStore } from '@/stores/canvas'
 import { useAsync } from '@/composables/useAsync'
 import { usePolling } from '@/composables/usePolling'
 
-import { persistSequenceEdit, fetchExecutionTree, exportSequenceAsJson } from '@/api/canvas'
+import { persistSequenceEdit, fetchExecutionTree, exportSequenceAsJson, type SaveMode } from '@/api/canvas'
 import { errorMessage } from '@/api/errors'
 
 import { computeLayout, buildEdges } from '@/components/canvas/dagLayout'
@@ -50,6 +50,7 @@ import {
   listContainers,
   descendantIds,
   collectIds,
+  blocksEqualIgnoringIds,
   type MoveTarget,
   type ContainerRef,
 } from '@/components/canvas/treeOps'
@@ -508,32 +509,52 @@ async function handleSave() {
     return
   }
 
-  // Status decides the save strategy. Production NEVER overwrites — it forks a new
-  // version (with a fresh id, avoiding the PK conflict); draft/staging/unpublished
-  // overwrite their current version in place.
   const def = ed.definition
-  const willFork = def.status === 'production'
-  const ok = await ui.confirm(
-    willFork
-      ? {
-          title: 'Save as a new version?',
-          message: `"${def.name}" is in production. Saving creates v${def.version + 1} from your edits; the live production version is preserved.`,
-          confirmText: 'Create new version',
-          tone: 'default',
-        }
-      : {
-          title: `Overwrite this ${def.status} version?`,
-          message: `Your edits replace v${def.version} of "${def.name}" in place — no new version is created.`,
-          confirmText: 'Overwrite',
-          tone: 'default',
-        },
-  )
-  if (!ok) return
+  const original = canvas.loadedSequence ?? def
+
+  // Decide the save mode + confirmation from status and whether the WORKFLOW changed.
+  let mode: SaveMode
+  if (def.status === 'production') {
+    // A production edit that only relabels blocks (no change to the workflow's shape
+    // or behaviour) may overwrite in place OR fork — let the user choose. A real
+    // workflow change forks only; we never silently overwrite a live production flow.
+    if (blocksEqualIgnoringIds(original.blocks, def.blocks)) {
+      const choice = await ui.confirmChoice({
+        title: 'Save changes to production',
+        message:
+          `Only non-workflow attributes (e.g. block IDs) changed. You can overwrite v${def.version} ` +
+          `in place, or create a new version (v${def.version + 1}).`,
+        altText: `Overwrite v${def.version}`,
+        confirmText: 'Create new version',
+        tone: 'default',
+      })
+      if (choice === 'cancel') return
+      mode = choice === 'alt' ? 'overwrite' : 'new-version'
+    } else {
+      const ok = await ui.confirm({
+        title: 'Save as a new version?',
+        message: `"${def.name}" is in production and its workflow changed. Saving creates v${def.version + 1}; the live production version is preserved.`,
+        confirmText: 'Create new version',
+        tone: 'default',
+      })
+      if (!ok) return
+      mode = 'new-version'
+    }
+  } else {
+    // draft | staging | unpublished → overwrite the current version in place.
+    const ok = await ui.confirm({
+      title: `Overwrite this ${def.status} version?`,
+      message: `Your edits replace v${def.version} of "${def.name}" in place — no new version is created.`,
+      confirmText: 'Overwrite',
+      tone: 'default',
+    })
+    if (!ok) return
+    mode = 'overwrite'
+  }
 
   saving.value = true
   try {
-    const original = canvas.loadedSequence ?? def
-    const res = await persistSequenceEdit(def, original)
+    const res = await persistSequenceEdit(def, original, { mode })
     canvas.commitSaved(res.saved)
     const detail =
       res.mode === 'new-version'

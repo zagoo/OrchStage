@@ -5,10 +5,13 @@ import { useUiStore } from '@/stores/ui'
 const ui = useUiStore()
 
 function onConfirm() {
-  ui.resolveConfirm(true)
+  ui.resolveConfirm('confirm')
+}
+function onAlt() {
+  ui.resolveConfirm('alt')
 }
 function onCancel() {
-  ui.resolveConfirm(false)
+  ui.resolveConfirm('cancel')
 }
 </script>
 
@@ -41,12 +44,20 @@ function onCancel() {
               <p class="mt-1.5 text-[13px] leading-relaxed text-muted">{{ ui.confirmState.message }}</p>
             </div>
           </div>
-          <div class="flex justify-end gap-2.5 border-t border-border bg-surface px-5 py-3.5">
+          <div class="flex flex-wrap justify-end gap-2.5 border-t border-border bg-surface px-5 py-3.5">
             <button
               class="rounded-md px-3.5 py-2 text-[13px] font-medium text-muted transition-colors hover:bg-hover hover:text-text"
               @click="onCancel"
             >
               {{ ui.confirmState.cancelText }}
+            </button>
+            <!-- Optional alternate action (e.g. "Overwrite") rendered as a secondary button. -->
+            <button
+              v-if="ui.confirmState.altText"
+              class="rounded-md border border-border-strong bg-surface-2 px-3.5 py-2 text-[13px] font-medium text-text transition-colors hover:bg-hover"
+              @click="onAlt"
+            >
+              {{ ui.confirmState.altText }}
             </button>
             <button
               :class="[

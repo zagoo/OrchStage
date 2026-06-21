@@ -332,6 +332,22 @@ export function renameBlock(blocks: BlockDefinition[], oldId: string, newId: str
   return updateBlockById(blocks, oldId, (b) => ({ ...b, id: newId }) as BlockDefinition)
 }
 
+/** Recursively blank a block's id (and its descendants') — for ignoring renames in comparisons. */
+function blankBlockId(block: BlockDefinition): BlockDefinition {
+  const withBlankedChildren = mapContainers(block, (_key, list) => list.map(blankBlockId))
+  return { ...withBlankedChildren, id: '' } as BlockDefinition
+}
+
+/**
+ * Compare two block trees IGNORING block ids. Returns true iff they differ ONLY by
+ * block renames — identical types, nesting, order, and per-block config otherwise.
+ * Lets the canvas tell a "non-workflow" production edit (e.g. just relabeling a
+ * block id) from one that actually changes the workflow's shape or behaviour.
+ */
+export function blocksEqualIgnoringIds(a: BlockDefinition[], b: BlockDefinition[]): boolean {
+  return JSON.stringify(a.map(blankBlockId)) === JSON.stringify(b.map(blankBlockId))
+}
+
 /** Swap a block with its previous/next sibling in the same list. No-op at edges. */
 export function reorderSibling(
   blocks: BlockDefinition[],

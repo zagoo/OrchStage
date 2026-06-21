@@ -15,17 +15,22 @@ export interface Toast {
   timeout: number
 }
 
+/** Tri-state result of a confirm dialog: the primary action, an optional alternate action, or cancel. */
+export type ConfirmResult = 'confirm' | 'alt' | 'cancel'
+
 export interface ConfirmOptions {
   title: string
   message: string
   confirmText?: string
+  /** Optional THIRD action (e.g. "Overwrite"); when set the dialog renders an extra button. */
+  altText?: string
   cancelText?: string
   tone?: 'danger' | 'default'
 }
 
 interface ConfirmState extends ConfirmOptions {
   open: boolean
-  resolve: ((ok: boolean) => void) | null
+  resolve: ((result: ConfirmResult) => void) | null
 }
 
 interface UiState {
@@ -122,21 +127,29 @@ export const useUiStore = defineStore('ui', {
     },
 
     // --- confirm dialog ---
+    /** Binary confirm: resolves true only for the primary action. */
     confirm(options: ConfirmOptions): Promise<boolean> {
-      return new Promise<boolean>((resolve) => {
+      return this.confirmChoice(options).then((r) => r === 'confirm')
+    },
+    /** Tri-state confirm: resolves 'confirm' | 'alt' | 'cancel' (set `altText` to show the alt button). */
+    confirmChoice(options: ConfirmOptions): Promise<ConfirmResult> {
+      return new Promise<ConfirmResult>((resolve) => {
         this.confirmState = {
           open: true,
           title: options.title,
           message: options.message,
           confirmText: options.confirmText ?? 'Confirm',
+          altText: options.altText,
           cancelText: options.cancelText ?? 'Cancel',
           tone: options.tone ?? 'default',
           resolve,
         }
       })
     },
-    resolveConfirm(ok: boolean): void {
-      this.confirmState.resolve?.(ok)
+    /** Resolve the open dialog. Accepts a ConfirmResult, or a boolean for back-compat (true→confirm, false→cancel). */
+    resolveConfirm(result: ConfirmResult | boolean): void {
+      const r: ConfirmResult = result === true ? 'confirm' : result === false ? 'cancel' : result
+      this.confirmState.resolve?.(r)
       this.confirmState = { open: false, title: '', message: '', resolve: null }
     },
   },
