@@ -68,6 +68,16 @@ const abSplitNode = (): CanvasNodeData => ({
 const stubs = {
   Drawer: { props: ['open', 'title', 'icon', 'width'], template: '<div class="drawer"><slot /></div>' },
   Tabs: { props: ['tabs', 'modelValue'], template: '<div class="tabs"></div>' },
+  // Select is the custom listbox (teleported popup, click-to-open) — its behaviour is
+  // covered by Select.spec.ts. Here we stub it with a native <select> mirroring the same
+  // API so these tests stay focused on NodeDetailPanel's emit logic, not Select internals.
+  Select: {
+    props: ['modelValue', 'options', 'placeholder', 'disabled', 'id', 'invalid'],
+    emits: ['update:modelValue'],
+    template:
+      '<select :value="modelValue" :disabled="disabled" @change="$emit(\'update:modelValue\', $event.target.value)">' +
+      '<option v-for="o in (options||[])" :key="o.value" :value="o.value">{{ o.label }}</option></select>',
+  },
 }
 
 function mountPanel(nodeData: CanvasNodeData = stepNode()) {

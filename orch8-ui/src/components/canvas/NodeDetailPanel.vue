@@ -291,16 +291,27 @@ function applyConfig() {
   const patch: Record<string, unknown> = {}
   jsonErrors.value = {}
 
-  // Typed helpers over the flat string form. Optional scalars become `undefined`
-  // when blank (shallow-merge + JSON.stringify then drop them). JSON fields record
-  // a per-field error on parse failure so the matching editor highlights.
-  const numOf = (k: string): number | undefined => {
-    const s = (f[k] ?? '').trim()
-    return s === '' ? undefined : Number(s)
+  // Typed helpers over the flat form. A `type="number"` input makes Vue cast its
+  // v-model to a NUMBER, so a form value may be a number (not a string) at runtime —
+  // ALWAYS coerce with String() before any string op, or ms fields like Timeout /
+  // Deadline crash with "(x ?? '').trim is not a function". Optional scalars become
+  // `undefined` when blank; JSON fields record a per-field parse error.
+  const strAt = (k: string): string => {
+    const v = f[k]
+    return v == null ? '' : String(v)
   }
-  const strOf = (k: string): string | undefined => (f[k] ? String(f[k]) : undefined)
+  const numOf = (k: string): number | undefined => {
+    const s = strAt(k).trim()
+    if (s === '') return undefined
+    const n = Number(s)
+    return Number.isNaN(n) ? undefined : n
+  }
+  const strOf = (k: string): string | undefined => {
+    const s = strAt(k)
+    return s === '' ? undefined : s
+  }
   const jsonOf = (k: string, required = false): unknown => {
-    const s = (f[k] ?? '').trim()
+    const s = strAt(k).trim()
     if (s === '') return required ? {} : undefined
     try {
       return JSON.parse(s)
