@@ -10,7 +10,7 @@
  */
 import { defineStore } from 'pinia'
 import { shallowRef, ref, computed } from 'vue'
-import type { SequenceDefinition, BlockDefinition } from '@/api/types/sequences'
+import type { SequenceDefinition, BlockDefinition, BlockType } from '@/api/types/sequences'
 import type { ExecutionNode, NodeState } from '@/api/types/instances'
 import type { EditableSequence } from '@/api/types/canvas'
 import {
@@ -22,6 +22,8 @@ import {
   updateBlockById,
   mapContainers,
   makeStep,
+  makeBlockOfType,
+  findBlock,
   genBlockId,
   validateSequence,
   type MoveTarget,
@@ -137,6 +139,21 @@ export const useCanvasStore = defineStore('canvas', () => {
     applyBlocks(updateBlockConfig(editable.value.definition.blocks, id, patch))
   }
 
+  /**
+   * Convert a block to a different type in place (same id). Type-specific config is
+   * replaced with fresh defaults for the new type (see treeOps.makeBlockOfType);
+   * composites that need a non-empty body get one tree-unique seed step.
+   */
+  function changeBlockType(id: string, newType: BlockType) {
+    if (!editable.value) return
+    const blocks = editable.value.definition.blocks
+    const existing = findBlock(blocks, id)
+    if (!existing || existing.type === newType) return
+    const seed = makeStep(genBlockId(blocks, 'step'))
+    const replacement = makeBlockOfType(newType, id, seed)
+    applyBlocks(updateBlockById(blocks, id, () => replacement))
+  }
+
   // --- Backwards-compatible helpers -------------------------------------------
 
   function markDirty() {
@@ -186,6 +203,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     reorder,
     move,
     updateConfig,
+    changeBlockType,
     markDirty,
     updateEditableBlocks,
     resetDirty,

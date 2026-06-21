@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest'
 import type {
   BlockDefinition,
+  BlockType,
   StepBlock,
   ParallelBlock,
   RaceBlock,
@@ -32,6 +33,8 @@ import {
   updateBlockConfig,
   reorderSibling,
   moveBlock,
+  makeBlockOfType,
+  makeStep,
   validateSequence,
 } from './treeOps'
 import { buildEdges } from './dagLayout'
@@ -345,5 +348,39 @@ describe('validateSequence', () => {
     expect(res.valid).toBe(true)
     expect(res.errors).toEqual([])
     expect(edgesAreConsistent(tree)).toBe(true)
+  })
+})
+
+// --- makeBlockOfType (block-type switcher) -----------------------------------
+describe('makeBlockOfType', () => {
+  const ALL: BlockType[] = [
+    'step',
+    'parallel',
+    'race',
+    'loop',
+    'for_each',
+    'router',
+    'try_catch',
+    'sub_sequence',
+    'a_b_split',
+    'cancellation_scope',
+  ]
+
+  it('produces a structurally-valid block of every type, preserving the id', () => {
+    for (const t of ALL) {
+      const seed = makeStep('seed_1')
+      const b = makeBlockOfType(t, 'blk', seed)
+      expect(b.type).toBe(t)
+      expect(b.id).toBe('blk')
+      const res = validateSequence([b])
+      expect(res.valid, `${t} should be valid but got ${JSON.stringify(res)}`).toBe(true)
+    }
+  })
+
+  it('seeds the provided child into body-requiring composites only', () => {
+    expect((makeBlockOfType('loop', 'l', makeStep('seed_1')) as LoopBlock).body[0].id).toBe('seed_1')
+    expect((makeBlockOfType('try_catch', 't', makeStep('seed_1')) as TryCatchBlock).try_block[0].id).toBe('seed_1')
+    // router may be empty — no seed child is consumed
+    expect((makeBlockOfType('router', 'r', makeStep('seed_1')) as RouterBlock).routes[0].blocks).toEqual([])
   })
 })

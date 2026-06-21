@@ -53,7 +53,7 @@ import {
   type ContainerRef,
 } from '@/components/canvas/treeOps'
 import type { CanvasNodeData } from '@/api/types/canvas'
-import type { SequenceDefinition, BlockDefinition } from '@/api/types/sequences'
+import type { SequenceDefinition, BlockDefinition, BlockType } from '@/api/types/sequences'
 import type { ExecutionNode } from '@/api/types/instances'
 
 import PageHeader from '@/components/ui/PageHeader.vue'
@@ -376,6 +376,9 @@ function ctxAddInto(key: string) {
 function panelUpdateConfig(patch: Record<string, unknown>) {
   if (selectedNodeId.value) canvas.updateConfig(selectedNodeId.value, patch)
 }
+function panelChangeType(newType: BlockType) {
+  if (selectedNodeId.value) canvas.changeBlockType(selectedNodeId.value, newType)
+}
 function panelDelete() {
   if (selectedNodeId.value) canvas.removeBlock(selectedNodeId.value)
   detailOpen.value = false
@@ -658,6 +661,7 @@ const errorCount = computed(() => Object.keys(canvas.blockErrors).length + canva
       :move-targets="moveTargets"
       :focus-route-index="focusRouteIndex"
       @update-config="panelUpdateConfig"
+      @change-type="panelChangeType"
       @delete="panelDelete"
       @reorder="panelReorder"
       @insert-after="panelInsertAfter"

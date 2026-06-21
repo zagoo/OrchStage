@@ -17,7 +17,7 @@
  *
  * DESIGN_REFERENCE §dag-sequences.md §3 (block taxonomy), §4 (edge semantics)
  */
-import type { BlockDefinition, StepBlock } from '@/api/types/sequences'
+import type { BlockDefinition, BlockType, StepBlock } from '@/api/types/sequences'
 import { buildEdges } from './dagLayout'
 
 // ---------------------------------------------------------------------------
@@ -212,6 +212,46 @@ export function listContainers(blocks: BlockDefinition[]): ContainerRef[] {
 /** Create a fresh, valid step block. `id` must be unique (see genBlockId). */
 export function makeStep(id: string, handler = 'log'): StepBlock {
   return { type: 'step', id, handler, params: {}, cancellable: false }
+}
+
+/**
+ * Build a fresh, minimally-valid block of ANY type, preserving `id`. Powers the
+ * detail panel's type switcher. Composite types whose validation requires a
+ * non-empty body are seeded with `child` (a ready, tree-unique step); container
+ * types that may legally be empty (parallel/race/router/a_b_split) start with
+ * empty slots. Free-text required fields get editable placeholders so the new
+ * block isn't instantly invalid. Defaults mirror `treeOps.validateSequence`.
+ */
+export function makeBlockOfType(type: BlockType, id: string, child: StepBlock): BlockDefinition {
+  switch (type) {
+    case 'step':
+      return makeStep(id)
+    case 'parallel':
+      return { type: 'parallel', id, branches: [[]] }
+    case 'race':
+      return { type: 'race', id, branches: [[], []], semantics: 'first_to_resolve' }
+    case 'loop':
+      return { type: 'loop', id, condition: 'true', body: [child], max_iterations: 100, continue_on_error: false }
+    case 'for_each':
+      return { type: 'for_each', id, collection: 'items', item_var: 'item', body: [child], max_iterations: 100 }
+    case 'router':
+      return { type: 'router', id, routes: [{ condition: 'true', blocks: [] }] }
+    case 'try_catch':
+      return { type: 'try_catch', id, try_block: [child], catch_block: [] }
+    case 'sub_sequence':
+      return { type: 'sub_sequence', id, sequence_name: 'sub-sequence' }
+    case 'a_b_split':
+      return {
+        type: 'a_b_split',
+        id,
+        variants: [
+          { name: 'A', weight: 50, blocks: [] },
+          { name: 'B', weight: 50, blocks: [] },
+        ],
+      }
+    case 'cancellation_scope':
+      return { type: 'cancellation_scope', id, blocks: [child] }
+  }
 }
 
 /** Generate a tree-unique block id with the given prefix. Deterministic. */

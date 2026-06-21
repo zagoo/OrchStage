@@ -22,6 +22,12 @@ const stepNode = (): CanvasNodeData => ({
   indexInDepth: 0,
 })
 
+const stepNodeEmptyParams = (): CanvasNodeData => ({
+  block: { type: 'step', id: 's2', handler: 'log', params: {}, cancellable: false } as StepBlock,
+  depth: 0,
+  indexInDepth: 0,
+})
+
 const routerNode = (): CanvasNodeData => ({
   block: {
     type: 'router',
@@ -46,20 +52,64 @@ function buttonByText(wrapper: ReturnType<typeof mountPanel>, text: string) {
   return wrapper.findAll('button').find((b) => b.text().includes(text))
 }
 
-describe('NodeDetailPanel', () => {
-  it('emits update-config with the edited handler when Apply is clicked', async () => {
-    const wrapper = mountPanel()
-    const handlerInput = wrapper.find('input[placeholder^="log"]')
-    expect(handlerInput.exists()).toBe(true)
-    await handlerInput.setValue('http')
+/** Find the <select> that offers a given option value (block-type vs handler picker). */
+function selectWith(wrapper: ReturnType<typeof mountPanel>, optionValue: string) {
+  return wrapper
+    .findAll('select')
+    .find((s) => s.findAll('option').some((o) => (o.element as HTMLOptionElement).value === optionValue))
+}
 
+describe('NodeDetailPanel', () => {
+  it('applies edited params without altering the unchanged handler', async () => {
+    const wrapper = mountPanel()
+    await wrapper.find('textarea').setValue('{"a":2}')
     await buttonByText(wrapper, 'Apply changes')!.trigger('click')
 
-    const events = wrapper.emitted('update-config')
-    expect(events).toBeTruthy()
-    const patch = events![0]![0] as Record<string, unknown>
-    expect(patch.handler).toBe('http')
-    expect(patch.params).toEqual({ a: 1 }) // JSON round-trips
+    const patch = wrapper.emitted('update-config')![0]![0] as Record<string, unknown>
+    expect(patch.handler).toBe('log') // handler Select model-value, unchanged
+    expect(patch.params).toEqual({ a: 2 })
+  })
+
+  it('selecting a handler fills EMPTY Params with its template and applies it', async () => {
+    const wrapper = mountPanel(stepNodeEmptyParams())
+    const handlerSelect = selectWith(wrapper, 'http_request')
+    expect(handlerSelect?.exists()).toBe(true)
+    await handlerSelect!.setValue('http_request')
+
+    // Params was empty/pristine → template fills in directly
+    expect(wrapper.find('textarea').element.value).toContain('"method"')
+
+    await buttonByText(wrapper, 'Apply changes')!.trigger('click')
+    const patch = wrapper.emitted('update-config')!.at(-1)![0] as Record<string, unknown>
+    expect(patch.handler).toBe('http_request')
+    expect((patch.params as Record<string, unknown>).method).toBe('GET')
+  })
+
+  it('does NOT overwrite custom Params on handler change; offers an opt-in template', async () => {
+    const wrapper = mountPanel() // params { a: 1 } — custom content
+    const before = wrapper.find('textarea').element.value
+    await selectWith(wrapper, 'http_request')!.setValue('http_request')
+
+    // custom Params preserved, NOT clobbered
+    expect(wrapper.find('textarea').element.value).toBe(before)
+    // an explicit opt-in is offered
+    const useBtn = wrapper.findAll('button').find((b) => /Use the http_request template/.test(b.text()))
+    expect(useBtn).toBeTruthy()
+
+    // accepting the offer fills the template
+    await useBtn!.trigger('click')
+    expect(wrapper.find('textarea').element.value).toContain('"method"')
+  })
+
+  it('emits change-type when a different block type is selected', async () => {
+    const wrapper = mountPanel()
+    const typeSelect = selectWith(wrapper, 'loop')
+    expect(typeSelect?.exists()).toBe(true)
+    await typeSelect!.setValue('loop')
+
+    const ev = wrapper.emitted('change-type')
+    expect(ev).toBeTruthy()
+    expect(ev![0]).toEqual(['loop'])
   })
 
   it('emits delete when Delete block is clicked', async () => {

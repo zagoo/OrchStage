@@ -8,10 +8,10 @@
  */
 import { computed, ref, watch } from 'vue'
 import { Info, Settings, Activity, Pencil, Trash2, ArrowUp, ArrowDown, Plus, FolderInput } from 'lucide-vue-next'
-import type { BlockDefinition } from '@/api/types/sequences'
+import type { BlockDefinition, BlockType } from '@/api/types/sequences'
 import type { CanvasNodeData } from '@/api/types/canvas'
 import { getContainers, type MoveTarget, type ContainerRef } from '@/components/canvas/treeOps'
-import { BLOCK_VISUAL, stepIcon, stepColorClass } from './blockConfig'
+import { BLOCK_VISUAL, stepIcon, stepColorClass, STEP_HANDLERS, HANDLER_PARAM_TEMPLATE } from './blockConfig'
 import { titleCase, formatDateTime, prettyJson } from '@/lib/format'
 import Drawer from '@/components/ui/Drawer.vue'
 import Badge from '@/components/ui/Badge.vue'
@@ -37,6 +37,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:open': [value: boolean]
   'update-config': [patch: Record<string, unknown>]
+  'change-type': [type: BlockType]
   delete: []
   reorder: [dir: 'up' | 'down']
   'insert-after': []
@@ -45,6 +46,16 @@ const emit = defineEmits<{
 }>()
 
 const activeTab = ref('config')
+
+// Block-type switcher — selecting a type converts the block (parent reroutes to
+// canvas.changeBlockType, which replaces it with fresh defaults of that type).
+const blockTypeOptions = (Object.keys(BLOCK_VISUAL) as BlockType[]).map((t) => ({
+  value: t,
+  label: BLOCK_VISUAL[t].label,
+}))
+function onTypeChange(t: string | undefined) {
+  if (block.value && t && t !== block.value.type) emit('change-type', t as BlockType)
+}
 
 const block = computed(() => props.nodeData?.block ?? null)
 const execNode = computed(() => props.nodeData?.execNode ?? null)
@@ -94,11 +105,60 @@ const moveSel = ref('')
 const routeForm = ref<{ condition: string; blocks: BlockDefinition[] }[]>([])
 const hasDefault = ref(false)
 
+// Handler picker (step blocks). Keep the current handler in the list even if it
+// isn't a known one, so an existing custom handler isn't dropped from the options.
+const handlerOptions = computed(() => {
+  const cur = form.value.handler
+  const list = cur && !STEP_HANDLERS.includes(cur) ? [cur, ...STEP_HANDLERS] : STEP_HANDLERS
+  return list.map((h) => ({ value: h, label: h }))
+})
+
+// Exact JSON string we last auto-filled, so we can tell an UNEDITED template apart
+// from real/custom content. Null whenever Params holds loaded or user-typed content.
+const autoFilledParams = ref<string | null>(null)
+// When a handler change would clobber custom Params, we DON'T overwrite — we stash
+// the handler here and surface an explicit "use template" opt-in instead.
+const templateOffer = ref<string | null>(null)
+
+/** Safe to overwrite Params: it's blank, an empty object, or an unedited auto-fill. */
+function paramsArePristine(): boolean {
+  const cur = (form.value.params ?? '').trim()
+  return cur === '' || cur === '{}' || cur === autoFilledParams.value
+}
+
+function fillTemplate(h: string) {
+  const tpl = prettyJson(HANDLER_PARAM_TEMPLATE[h] ?? {})
+  form.value.params = tpl
+  autoFilledParams.value = tpl
+  templateOffer.value = null
+}
+
+/**
+ * Selecting a handler fills Params with that handler's standard JSON template —
+ * but only when Params is pristine. If the user has loaded or hand-edited Params,
+ * we keep their content and offer the template as an explicit opt-in (no silent loss).
+ */
+function onHandlerSelect(h: string | undefined) {
+  if (!h) return
+  form.value.handler = h
+  if (paramsArePristine()) fillTemplate(h)
+  else templateOffer.value = h
+}
+
+/** User accepted the offer to replace their custom Params with the template. */
+function applyTemplateOffer() {
+  if (templateOffer.value) fillTemplate(templateOffer.value)
+}
+
 function populate(b: BlockDefinition | null) {
   jsonError.value = null
   moveSel.value = ''
   routeForm.value = []
   hasDefault.value = false
+  // Loaded Params are real content, not an auto-fill — don't let the next handler
+  // change silently clobber them, and clear any stale template offer.
+  autoFilledParams.value = null
+  templateOffer.value = null
   if (!b) {
     form.value = {}
     return
@@ -253,6 +313,11 @@ const tabs = [
       <div v-show="activeTab === 'config'">
           <KeyValue label="Block ID" :value="block.id" mono class="mb-3" />
 
+          <!-- Block-type switcher: pick any type; the editor re-renders that type's fields. -->
+          <Field label="Block type" class="mb-3">
+            <Select :model-value="block.type" :options="blockTypeOptions" @update:model-value="onTypeChange" />
+          </Field>
+
           <!-- Editable scalar fields -->
           <template v-if="isEditable">
             <div class="mb-3 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-muted">
@@ -261,7 +326,7 @@ const tabs = [
 
             <template v-if="block.type === 'step'">
               <Field label="Handler" required class="mb-2.5">
-                <Input v-model="form.handler" placeholder="log, http, transform…" />
+                <Select :model-value="form.handler" :options="handlerOptions" @update:model-value="onHandlerSelect" />
               </Field>
               <div class="mb-2.5 grid grid-cols-2 gap-2">
                 <Field label="Timeout (ms)"><Input v-model="form.timeout" type="number" placeholder="—" /></Field>
@@ -275,6 +340,21 @@ const tabs = [
               <Field label="Params (JSON)" :error="jsonError ?? undefined" class="mb-3">
                 <Textarea v-model="form.params" :rows="6" class="mono text-[12px]" />
               </Field>
+              <!-- Safeguard: a handler change never silently wipes custom Params —
+                   it offers the template as an explicit opt-in instead. -->
+              <div
+                v-if="templateOffer"
+                class="mb-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-[11.5px] text-warning"
+              >
+                <Info :size="13" class="mt-0.5 shrink-0" />
+                <span>
+                  Kept your custom Params.
+                  <button class="font-semibold underline hover:opacity-80" @click="applyTemplateOffer">
+                    Use the {{ templateOffer }} template
+                  </button>
+                  instead?
+                </span>
+              </div>
             </template>
 
             <template v-else-if="block.type === 'sub_sequence'">

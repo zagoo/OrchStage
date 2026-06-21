@@ -3,17 +3,17 @@
  * Action buttons for a sequence: set status, promote, unpublish, delete.
  * DESIGN_REFERENCE §9.7–9.11 (dag-sequences.md)
  */
-import { ref } from 'vue'
-import { Rocket, BookX, Trash2, CheckCircle } from 'lucide-vue-next'
+import { ref, computed } from 'vue'
+import { Rocket, BookX, Trash2, CheckCircle, RotateCcw } from 'lucide-vue-next'
 import { useUiStore } from '@/stores/ui'
 import {
   setSequenceStatus,
   promoteSequence,
-  unpublishSequence,
   deleteSequence,
+  createSequence,
 } from '@/api/sequences'
 import { isApiError, errorMessage } from '@/api/errors'
-import type { SequenceDefinition, SequenceStatus } from '@/api/types/sequences'
+import type { SequenceDefinition, SequenceStatus, CreateSequenceRequest } from '@/api/types/sequences'
 import Modal from '@/components/ui/Modal.vue'
 import Select from '@/components/ui/Select.vue'
 import Button from '@/components/ui/Button.vue'
@@ -28,23 +28,36 @@ const busy = ref(false)
 const showStatusModal = ref(false)
 const targetStatus = ref<SequenceStatus>('staging')
 
-// Valid transitions from dag-sequences.md §2
-const transitions: Record<SequenceStatus, SequenceStatus[]> = {
+const ALL_STATUSES: SequenceStatus[] = ['draft', 'staging', 'production', 'unpublished']
+
+// The server's status state machine is strictly FORWARD + in-place (verified live):
+//   draft → staging|unpublished, staging → production|unpublished,
+//   production → unpublished, unpublished → ∅ (terminal).
+// Any other target (going backward, or reviving an unpublished sequence) is reached
+// by publishing a NEW VERSION at that status — there is no in-place path.
+const inPlaceTransitions: Record<SequenceStatus, SequenceStatus[]> = {
   draft: ['staging', 'unpublished'],
   staging: ['production', 'unpublished'],
   production: ['unpublished'],
   unpublished: [],
 }
 
-function validTargetOptions(): SelectOption[] {
-  return transitions[props.sequence.status].map((s) => ({
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+const isUnpublished = computed(() => props.sequence.status === 'unpublished')
+const targetIsInPlace = computed(() => inPlaceTransitions[props.sequence.status].includes(targetStatus.value))
+
+// Offer EVERY status except the current one, so the full lifecycle is reachable.
+// Non-forward targets are labelled "(new version)" so the effect is explicit.
+function statusOptions(): SelectOption[] {
+  const allowed = inPlaceTransitions[props.sequence.status]
+  return ALL_STATUSES.filter((s) => s !== props.sequence.status).map((s) => ({
     value: s,
-    label: s.charAt(0).toUpperCase() + s.slice(1),
+    label: allowed.includes(s) ? cap(s) : `${cap(s)} (new version)`,
   }))
 }
 
 function openStatusModal() {
-  const opts = validTargetOptions()
+  const opts = statusOptions()
   if (opts.length) targetStatus.value = opts[0].value as SequenceStatus
   showStatusModal.value = true
 }
@@ -52,13 +65,36 @@ function openStatusModal() {
 async function applySetStatus() {
   busy.value = true
   try {
-    await setSequenceStatus(props.sequence.id, { status: targetStatus.value })
-    ui.success('Status updated', `${props.sequence.name} → ${targetStatus.value}`)
+    if (targetIsInPlace.value) {
+      // Server-supported in-place forward transition.
+      await setSequenceStatus(props.sequence.id, { status: targetStatus.value })
+      ui.success('Status updated', `${props.sequence.name} → ${targetStatus.value}`)
+    } else {
+      // No in-place path (backward, or reviving a terminal 'unpublished' sequence) —
+      // publish a NEW VERSION at the target status. This is how republishing works.
+      const seq = props.sequence
+      const body: CreateSequenceRequest = {
+        ...seq,
+        id: crypto.randomUUID(),
+        version: seq.version + 1,
+        status: targetStatus.value,
+        deprecated: false,
+        created_at: new Date().toISOString(),
+      }
+      const res = await createSequence(body)
+      const warn = res.warnings?.length ? ` · ${res.warnings.join('; ')}` : ''
+      ui.success(
+        isUnpublished.value ? 'Republished' : 'New version published',
+        `${seq.name} v${body.version} → ${targetStatus.value}${warn}`,
+      )
+    }
     showStatusModal.value = false
     emit('changed')
   } catch (e) {
     if (isApiError(e) && e.status === 400) {
       ui.error('Invalid transition', e.message)
+    } else if (isApiError(e) && e.status === 409) {
+      ui.error('Version exists', `A v${props.sequence.version + 1} already exists for "${props.sequence.name}".`)
     } else {
       ui.error('Status update failed', errorMessage(e))
     }
@@ -98,18 +134,25 @@ async function handlePromote() {
 async function handleUnpublish() {
   const ok = await ui.confirm({
     title: `Unpublish "${props.sequence.name}"?`,
-    message: 'All versions of this sequence will be marked deprecated and unpublished. Running instances are not affected.',
+    message: 'Sets this version’s status to Unpublished. Running instances are not affected.',
     tone: 'danger',
     confirmText: 'Unpublish',
   })
   if (!ok) return
   busy.value = true
   try {
-    await unpublishSequence(props.sequence.name, { delete: false })
-    ui.success('Unpublished', props.sequence.name)
+    // The standalone POST /unpublish endpoint is a near no-op on a single version;
+    // the real unpublish is the in-place status transition (same path as
+    // "Set status → Unpublished"), which every non-terminal status permits.
+    await setSequenceStatus(props.sequence.id, { status: 'unpublished' })
+    ui.success('Unpublished', `${props.sequence.name} → unpublished`)
     emit('changed')
   } catch (e) {
-    ui.error('Unpublish failed', errorMessage(e))
+    if (isApiError(e) && e.status === 400) {
+      ui.error('Cannot unpublish', e.message)
+    } else {
+      ui.error('Unpublish failed', errorMessage(e))
+    }
   } finally {
     busy.value = false
   }
@@ -142,16 +185,10 @@ async function handleDelete() {
 
 <template>
   <div class="flex items-center gap-2">
-    <!-- Set status -->
-    <Button
-      v-if="validTargetOptions().length > 0"
-      size="sm"
-      variant="ghost"
-      :disabled="busy"
-      @click="openStatusModal"
-    >
-      <template #icon><CheckCircle :size="14" /></template>
-      Set status
+    <!-- Set status / Republish (always available — full lifecycle is reachable) -->
+    <Button size="sm" variant="ghost" :disabled="busy" @click="openStatusModal">
+      <template #icon><component :is="isUnpublished ? RotateCcw : CheckCircle" :size="14" /></template>
+      {{ isUnpublished ? 'Republish' : 'Set status' }}
     </Button>
 
     <!-- Promote (staging only) -->
@@ -186,24 +223,33 @@ async function handleDelete() {
   </div>
 
   <!-- Status change modal -->
-  <Modal v-model:open="showStatusModal" title="Set sequence status" size="sm">
+  <Modal
+    v-model:open="showStatusModal"
+    :title="isUnpublished ? 'Republish sequence' : 'Set sequence status'"
+    size="sm"
+  >
     <div class="flex flex-col gap-4">
       <p class="text-[13px] text-muted">
         Current status: <strong>{{ sequence.status }}</strong>
       </p>
       <Field label="New status">
         <template #default="{ id }">
-          <Select
-            :id="id"
-            v-model="targetStatus"
-            :options="validTargetOptions()"
-          />
+          <Select :id="id" v-model="targetStatus" :options="statusOptions()" />
         </template>
       </Field>
+      <p class="text-[12px] leading-relaxed text-muted">
+        <template v-if="targetIsInPlace">Updates the current version’s status in place.</template>
+        <template v-else>
+          Publishes a new version (<strong>v{{ sequence.version + 1 }}</strong>) at “{{ targetStatus }}” — the server has
+          no in-place path from “{{ sequence.status }}”.
+        </template>
+      </p>
     </div>
     <template #footer="{ close }">
       <Button variant="ghost" @click="close">Cancel</Button>
-      <Button variant="primary" :loading="busy" @click="applySetStatus">Apply</Button>
+      <Button variant="primary" :loading="busy" @click="applySetStatus">
+        {{ targetIsInPlace ? 'Apply' : 'Publish new version' }}
+      </Button>
     </template>
   </Modal>
 </template>

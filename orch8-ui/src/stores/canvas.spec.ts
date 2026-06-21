@@ -4,6 +4,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useCanvasStore } from './canvas'
+import { collectIds, findBlock } from '@/components/canvas/treeOps'
 import type { SequenceDefinition, BlockDefinition } from '@/api/types/sequences'
 import type { ExecutionNode } from '@/api/types/instances'
 
@@ -256,6 +257,97 @@ describe('useCanvasStore', () => {
       store.updateConfig('a', { handler: 'http' })
       expect((store.blocks[0] as { handler: string }).handler).toBe('http')
       expect(store.isDirty).toBe(true)
+      expect(store.isValid).toBe(true)
+    })
+
+    it('changeBlockType converts a block in place, preserving id and staying valid', () => {
+      const store = loadWith('a')
+      store.changeBlockType('a', 'loop')
+      const b = store.blocks[0] as { type: string; id: string }
+      expect(b.type).toBe('loop')
+      expect(b.id).toBe('a')
+      expect(store.isDirty).toBe(true)
+      // loop is seeded with a body step, so the converted tree validates cleanly
+      expect(store.isValid).toBe(true)
+    })
+
+    it('changeBlockType is a no-op when the type is unchanged', () => {
+      const store = loadWith('a')
+      store.changeBlockType('a', 'step')
+      expect(store.isDirty).toBe(false)
+    })
+
+    // --- Conversion edge cases: old subtree must be strictly wiped (no orphans) ---
+
+    it('converting a composite with nested children to step wipes ALL descendants', () => {
+      const store = useCanvasStore()
+      const seq = makeSeq('s1')
+      seq.blocks = [
+        {
+          type: 'router',
+          id: 'r',
+          routes: [{ condition: 'c1', blocks: [realStep('child1'), realStep('child2')] }],
+          default: [realStep('child3')],
+        } as BlockDefinition,
+      ]
+      store.loadSequence(seq)
+      expect(collectIds(store.blocks).sort()).toEqual(['child1', 'child2', 'child3', 'r'])
+
+      store.changeBlockType('r', 'step')
+
+      // r is now a leaf step; every former descendant is gone from the tree
+      expect(collectIds(store.blocks)).toEqual(['r'])
+      expect(findBlock(store.blocks, 'child1')).toBeNull()
+      expect(findBlock(store.blocks, 'child2')).toBeNull()
+      expect(findBlock(store.blocks, 'child3')).toBeNull()
+      expect((store.blocks[0] as { type: string }).type).toBe('step')
+      expect(store.isValid).toBe(true)
+    })
+
+    it('converting a DEEPLY-nested composite wipes only its subtree, keeping siblings', () => {
+      const store = useCanvasStore()
+      const seq = makeSeq('s1')
+      seq.blocks = [
+        realStep('a'),
+        {
+          type: 'parallel',
+          id: 'p',
+          branches: [
+            [
+              {
+                type: 'loop',
+                id: 'lp',
+                condition: 'x',
+                body: [realStep('inner')],
+                max_iterations: 3,
+                continue_on_error: false,
+              } as BlockDefinition,
+            ],
+          ],
+        } as BlockDefinition,
+      ]
+      store.loadSequence(seq)
+      expect(collectIds(store.blocks).sort()).toEqual(['a', 'inner', 'lp', 'p'])
+
+      store.changeBlockType('lp', 'step') // loop (with body 'inner') → step, nested in parallel branch
+
+      const ids = collectIds(store.blocks).sort()
+      expect(ids).toEqual(['a', 'lp', 'p']) // 'inner' wiped; siblings 'a' & 'p' intact
+      expect(findBlock(store.blocks, 'inner')).toBeNull()
+      expect((findBlock(store.blocks, 'lp') as { type: string }).type).toBe('step')
+      expect(store.isValid).toBe(true)
+    })
+
+    it('step → composite → step round-trip wipes the seeded node and restores clean ids', () => {
+      const store = loadWith('a', 'b')
+      store.changeBlockType('a', 'loop') // seeds exactly one body step with a generated id
+      const seedIds = collectIds(store.blocks).filter((id) => id !== 'a' && id !== 'b')
+      expect(seedIds).toHaveLength(1)
+
+      store.changeBlockType('a', 'step') // back to a leaf step — seed must be gone
+      expect(collectIds(store.blocks).sort()).toEqual(['a', 'b'])
+      expect(findBlock(store.blocks, seedIds[0])).toBeNull()
+      expect((store.blocks[0] as { type: string }).type).toBe('step')
       expect(store.isValid).toBe(true)
     })
 

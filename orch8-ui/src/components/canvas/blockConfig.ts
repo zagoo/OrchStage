@@ -37,6 +37,7 @@ import {
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import type { BlockType } from '@/api/types/sequences'
+import type { Json } from '@/api/types/common'
 
 export interface BlockVisual {
   icon: Component
@@ -150,6 +151,69 @@ export const BLOCK_VISUAL: Record<BlockType, BlockVisual> = {
     colorClass: 'text-danger bg-danger-soft',
     label: 'CancellationScope',
   },
+}
+
+/** Known step handler names offered in the editor's handler picker. */
+export const STEP_HANDLERS: string[] = [
+  'log',
+  'sleep',
+  'http_request',
+  'llm_call',
+  'tool_call',
+  'mcp_call',
+  'agent',
+  'email_send',
+  'transform',
+  'assert',
+  'memory_store',
+  'memory_search',
+  'blob_put',
+  'blob_get',
+  'human_review',
+  'emit_event',
+  'send_signal',
+  'query_instance',
+  'set_state',
+  'get_state',
+  'delete_state',
+  'merge_state',
+  'embed',
+  'fail',
+  'noop',
+]
+
+/**
+ * Standard starter `params` template per handler. Selecting a handler in the
+ * editor fills the Params JSON with the matching shape, so the type-specific
+ * inputs are concrete. The server treats unknown handlers/params leniently
+ * (201 + warning), so these are editor scaffolding, not a hard schema.
+ */
+export const HANDLER_PARAM_TEMPLATE: Record<string, Json> = {
+  log: { message: '' },
+  sleep: { duration_ms: 1000 },
+  http_request: { method: 'GET', url: '', headers: {}, body: null },
+  llm_call: { model: 'claude-opus-4-8', prompt: '', max_tokens: 1024, temperature: 0.7 },
+  tool_call: { tool: '', arguments: {} },
+  mcp_call: { server: '', tool: '', arguments: {} },
+  agent: { agent: '', input: {} },
+  email_send: { template: '', to: '', data: {} },
+  transform: { expression: '' },
+  assert: { condition: '', message: '' },
+  memory_store: { key: '', value: null, namespace: 'default' },
+  memory_search: { query: '', limit: 10, namespace: 'default' },
+  blob_put: { key: '', content: '', content_type: 'application/octet-stream' },
+  blob_get: { key: '' },
+  human_review: { prompt: '', choices: [] },
+  emit_event: { event: '', payload: {} },
+  send_signal: { instance_id: '', signal: '', payload: {} },
+  query_instance: { instance_id: '' },
+  set_state: { key: '', value: null },
+  get_state: { key: '' },
+  delete_state: { key: '' },
+  merge_state: { state: {} },
+  embed: { input: '', model: '' },
+  fail: { message: '', code: '' },
+  noop: {},
 }
 
 /** State → CSS classes for the live-state ring around a node. */
