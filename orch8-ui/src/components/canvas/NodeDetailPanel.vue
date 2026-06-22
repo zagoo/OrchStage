@@ -7,7 +7,7 @@
  * DESIGN_REFERENCE §dag-sequences.md §3, §7 Execution State
  */
 import { computed, ref, watch } from 'vue'
-import { Info, Settings, Activity, Pencil, Trash2, ArrowUp, ArrowDown, Plus, FolderInput, Check } from 'lucide-vue-next'
+import { Info, Settings, Activity, Braces, Pencil, Trash2, ArrowUp, ArrowDown, Plus, FolderInput, Check } from 'lucide-vue-next'
 import type { BlockDefinition, BlockType } from '@/api/types/sequences'
 import type { CanvasNodeData } from '@/api/types/canvas'
 import { getContainers, type MoveTarget, type ContainerRef, type AddableSlot } from '@/components/canvas/treeOps'
@@ -25,6 +25,7 @@ import {
   handlerParamReference,
 } from './blockConfig'
 import JsonExampleControls from './JsonExampleControls.vue'
+import RuntimeReferencePanel from './RuntimeReferencePanel.vue'
 import { titleCase, formatDateTime, prettyJson } from '@/lib/format'
 import Drawer from '@/components/ui/Drawer.vue'
 import Badge from '@/components/ui/Badge.vue'
@@ -471,6 +472,7 @@ function onMoveSelect(value: string) {
 
 const tabs = [
   { key: 'config', label: 'Config', icon: Settings },
+  { key: 'env', label: 'Env Var', icon: Braces },
   { key: 'live', label: 'Live State', icon: Activity },
 ]
 </script>
@@ -892,6 +894,11 @@ const tabs = [
             <p class="mb-1 text-[11px] font-medium uppercase tracking-wider text-muted">Full Definition</p>
             <CodeBlock :content="block" language="json" />
           </div>
+      </div>
+
+      <!-- Env Var: complete runtime/template/expression/environment reference (read-only). -->
+      <div v-show="activeTab === 'env'" class="mt-2">
+        <RuntimeReferencePanel />
       </div>
 
       <div v-show="activeTab === 'live'" class="mt-2">

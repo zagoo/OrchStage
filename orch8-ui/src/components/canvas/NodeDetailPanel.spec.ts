@@ -432,4 +432,32 @@ describe('NodeDetailPanel', () => {
     expect(t, 'block-type description').toContain('single unit of work')
     expect(t, 'handler description').toContain('observability')
   })
+
+  // --- Env Var tab: complete runtime/template/expression/environment reference ---
+
+  it('registers an "Env Var" tab that renders the complete runtime/env reference', () => {
+    // Render the Tabs bar labels (the shared stub is content-less) so we can
+    // confirm the new tab is wired into the tab list.
+    const tabsBar = {
+      props: ['tabs', 'modelValue'],
+      template: '<div class="tabs"><button v-for="t in tabs" :key="t.key">{{ t.label }}</button></div>',
+    }
+    const wrapper = mount(NodeDetailPanel, {
+      props: { open: true, nodeData: stepNode() },
+      global: { stubs: { ...stubs, Tabs: tabsBar } },
+    })
+
+    // The tab exists in the bar…
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Env Var')).toBe(true)
+
+    // …and its reference content renders (a v-show sibling, always mounted): every
+    // requested context kind plus environment, each with a concrete example.
+    const t = wrapper.text()
+    expect(t, 'section').toContain('Template variables')
+    expect(t, 'data context').toContain('{{ context.data.user_id }}')
+    expect(t, 'config context').toContain('{{ context.config.api_base_url }}')
+    expect(t, 'node output context').toContain('{{ outputs.fetch_user.email }}')
+    expect(t, 'expression functions').toContain('Expression functions')
+    expect(t, 'environment variable').toContain('OPENAI_API_KEY')
+  })
 })
