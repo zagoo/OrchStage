@@ -1,14 +1,16 @@
 <script setup lang="ts">
 /**
- * "Env Var" tab content for the node editor — a complete, READ-ONLY reference of
- * everything a workflow author can reference while editing a node: template
- * variables (data / config / outputs / runtime / state contexts), interpolation
- * behaviour, pipe filters, template & expression functions, expression operators,
- * and the engine's environment variables.
+ * "Context" tab content for the node editor — a complete, READ-ONLY reference of
+ * everything a node can ACCESS at runtime and the methods to read it: template
+ * variables (data / config / input / outputs / runtime / state contexts),
+ * interpolation behaviour, pipe filters, template & expression functions, and
+ * expression operators.
  *
- * Every entry carries a concrete, copy-ready example (CopyButton). The data is the
- * single source of truth in runtimeReference.ts, extracted verbatim from the engine
- * source so it cannot drift. DESIGN_REFERENCE §dag-sequences.md (templates/expressions).
+ * Environment variables are intentionally absent — their values are not readable
+ * inside a node (see runtimeReference.ts header). Every entry carries a concrete,
+ * copy-ready example (CopyButton). The data is the single source of truth in
+ * runtimeReference.ts, extracted verbatim from the engine source so it cannot drift.
+ * DESIGN_REFERENCE §dag-sequences.md (templates/expressions).
  */
 import { Info } from 'lucide-vue-next'
 import { RUNTIME_REFERENCE, type RefEntry } from './runtimeReference'
@@ -27,9 +29,9 @@ function startsGroup(entries: RefEntry[], i: number): boolean {
     <div class="flex items-start gap-2 rounded-md border border-border bg-surface-2 px-3 py-2 text-[11.5px] leading-snug text-muted">
       <Info :size="13" class="mt-0.5 shrink-0 text-subtle" />
       <span>
-        Everything you can reference while editing a node — template variables, filters, functions, expression
-        operators, and the engine environment. Interpolate with <code v-pre class="mono text-text">{{ … }}</code> in any
-        string field. Click the copy icon on any example to copy it.
+        Everything a node can read at runtime, and the methods to read it — template variables, filters, functions,
+        and expression operators. Interpolate with <code v-pre class="mono text-text">{{ … }}</code> in any string
+        field. Click the copy icon on any example to copy it.
       </span>
     </div>
 

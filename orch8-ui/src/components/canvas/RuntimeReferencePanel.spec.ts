@@ -1,10 +1,11 @@
 /**
- * RuntimeReferencePanel renders the complete runtime/template/expression/env
- * reference for the node editor's "Env Var" tab. These tests assert it shows
- * every section, surfaces concrete copyable examples for each requested context
- * kind, and gives EVERY entry exactly one copy affordance (the "easy-to-copy"
- * requirement) — so a rendering regression that hides the reference or drops the
- * copy buttons fails here.
+ * RuntimeReferencePanel renders the node editor's "Context" tab — the complete,
+ * read-only reference of what a node can ACCESS at runtime (template variables,
+ * interpolation, filters, template/expression functions, expression operators).
+ * These tests assert it shows every section, surfaces concrete copyable examples
+ * for each context kind, gives EVERY entry exactly one copy affordance (the
+ * "easy-to-copy" requirement), and — since the tab was narrowed from "Env Var" —
+ * renders NO environment-variable content (not readable inside a node).
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
@@ -28,7 +29,6 @@ describe('RuntimeReferencePanel', () => {
     expect(t, 'runtime context').toContain('{{ runtime.attempt }}')
     expect(t, 'state context').toContain('{{ state.cursor }}')
     expect(t, 'expression').toContain("context.data.status == 'active'")
-    expect(t, 'env var').toContain('OPENAI_API_KEY')
   })
 
   it('gives every entry exactly one copy button (the easy-to-copy requirement)', () => {
@@ -53,9 +53,10 @@ describe('RuntimeReferencePanel', () => {
     }
   })
 
-  it('makes the no-env-namespace honesty note visible', () => {
+  it('renders NO environment-variable content (Context tab scope)', () => {
     const t = mount(RuntimeReferencePanel).text()
-    expect(t).toContain('api_key_env')
-    expect(t.toLowerCase()).toContain('no {{ env')
+    for (const banned of ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'ORCH8_', 'api_key_env', 'Environment']) {
+      expect(t, `must not render "${banned}"`).not.toContain(banned)
+    }
   })
 })

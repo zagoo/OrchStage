@@ -472,7 +472,7 @@ function onMoveSelect(value: string) {
 
 const tabs = [
   { key: 'config', label: 'Config', icon: Settings },
-  { key: 'env', label: 'Env Var', icon: Braces },
+  { key: 'context', label: 'Context', icon: Braces },
   { key: 'live', label: 'Live State', icon: Activity },
 ]
 </script>
@@ -896,8 +896,9 @@ const tabs = [
           </div>
       </div>
 
-      <!-- Env Var: complete runtime/template/expression/environment reference (read-only). -->
-      <div v-show="activeTab === 'env'" class="mt-2">
+      <!-- Context: complete read-only reference of what a node can access at runtime
+           (template variables / interpolation / filters / functions / expression ops). -->
+      <div v-show="activeTab === 'context'" class="mt-2">
         <RuntimeReferencePanel />
       </div>
 

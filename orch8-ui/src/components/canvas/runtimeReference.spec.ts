@@ -144,44 +144,34 @@ describe('runtimeReference — matches the engine source exactly (anti-drift)', 
   })
 })
 
-describe('runtimeReference — environment variables', () => {
-  it('documents the api_key_env mechanism + all 10 provider key env vars', () => {
-    const names = syntaxes('env-workflow')
-    for (const k of [
-      'OPENAI_API_KEY',
-      'ANTHROPIC_API_KEY',
-      'GEMINI_API_KEY',
-      'DEEPSEEK_API_KEY',
-      'DASHSCOPE_API_KEY',
-      'PERPLEXITY_API_KEY',
-      'GROQ_API_KEY',
-      'TOGETHER_API_KEY',
-      'MISTRAL_API_KEY',
-      'OPENROUTER_API_KEY',
-    ]) {
-      expect(names, `workflow env should include ${k}`).toContain(k)
-    }
-    expect(JSON.stringify(names)).toContain('api_key_env')
+describe('runtimeReference — EXCLUDES environment variables (Context tab scope)', () => {
+  // The tab was narrowed from "Env Var" to "Context": only what a node can actually
+  // READ at runtime. Env var names/values (provider keys, ORCH8_* server config) and
+  // the api_key_env param are not readable inside a node, so they must NOT appear.
+  it('contains exactly the six context/template/expression sections (no env sections)', () => {
+    expect(RUNTIME_REFERENCE.map((s) => s.id)).toEqual([
+      'variables',
+      'interpolation',
+      'filters',
+      'template-functions',
+      'expr-operators',
+      'expr-functions',
+    ])
   })
 
-  it('documents engine/server env vars across every concern, each with a group', () => {
-    const names = syntaxes('env-server')
-    for (const v of [
-      'ORCH8_ENCRYPTION_KEY',
-      'ORCH8_DATABASE_URL',
-      'ORCH8_HTTP_ADDR',
-      'ORCH8_LOG_LEVEL',
-      'ORCH8_OTLP_ENDPOINT',
-      'ORCH8_ALLOW_INTERNAL_URLS',
-      'ORCH8_TICK_INTERVAL_MS',
-      'ORCH8_WEBHOOK_SECRET',
-      'OTEL_SERVICE_NAME',
-      'HOSTNAME',
-    ]) {
-      expect(names, `server env should include ${v}`).toContain(v)
+  it('lists no environment variable or api_key_env param in any entry', () => {
+    for (const e of allEntries) {
+      const blob = `${e.syntax} ${e.example} ${e.meta ?? ''}`
+      expect(blob, `entry "${e.syntax}" must not mention env vars`).not.toMatch(
+        /ORCH8_|_API_KEY\b|api_key_env|OTEL_SERVICE_NAME|\bHOSTNAME\b|\bPOD_NAME\b/,
+      )
     }
-    for (const e of section('env-server').entries) {
-      expect(e.group, `group for ${e.syntax}`).toBeTruthy()
+  })
+
+  it('never mentions provider keys or env config anywhere in the data', () => {
+    const blob = JSON.stringify(RUNTIME_REFERENCE)
+    for (const banned of ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'ORCH8_', 'api_key_env', 'Environment']) {
+      expect(blob, `data must not contain "${banned}"`).not.toContain(banned)
     }
   })
 })
@@ -191,17 +181,10 @@ describe('runtimeReference — does not invent syntax the engine lacks', () => {
     expect(JSON.stringify(RUNTIME_REFERENCE)).not.toContain('${')
   })
 
-  it('never references a {{ env.X }} namespace in any copyable snippet (no such root exists)', () => {
-    // Prose may MENTION {{ env.X }} to deny it; what must never happen is a
-    // copyable syntax/example that presents it as a real reference.
+  it('never references a {{ env.X }} namespace in any entry (no such root exists)', () => {
     for (const e of allEntries) {
       expect(e.syntax, `syntax "${e.syntax}"`).not.toMatch(/\{\{\s*env\./)
       expect(e.example, `example "${e.example}"`).not.toMatch(/\{\{\s*env\./)
     }
-  })
-
-  it('states plainly that there is no env namespace / no per-step env field', () => {
-    const env = section('env-workflow')
-    expect(`${env.blurb} ${env.note ?? ''}`).toMatch(/no \{\{ env/i)
   })
 })

@@ -433,11 +433,11 @@ describe('NodeDetailPanel', () => {
     expect(t, 'handler description').toContain('observability')
   })
 
-  // --- Env Var tab: complete runtime/template/expression/environment reference ---
+  // --- Context tab: read-only reference of what a node can access at runtime ---
 
-  it('registers an "Env Var" tab that renders the complete runtime/env reference', () => {
+  it('registers a "Context" tab (not "Env Var") rendering the readable-context reference', () => {
     // Render the Tabs bar labels (the shared stub is content-less) so we can
-    // confirm the new tab is wired into the tab list.
+    // confirm the tab is wired into the tab list under its new name.
     const tabsBar = {
       props: ['tabs', 'modelValue'],
       template: '<div class="tabs"><button v-for="t in tabs" :key="t.key">{{ t.label }}</button></div>',
@@ -447,17 +447,20 @@ describe('NodeDetailPanel', () => {
       global: { stubs: { ...stubs, Tabs: tabsBar } },
     })
 
-    // The tab exists in the bar…
-    expect(wrapper.findAll('button').some((b) => b.text() === 'Env Var')).toBe(true)
+    // The tab is renamed to "Context"; the old "Env Var" label is gone.
+    const labels = wrapper.findAll('button').map((b) => b.text())
+    expect(labels).toContain('Context')
+    expect(labels).not.toContain('Env Var')
 
     // …and its reference content renders (a v-show sibling, always mounted): every
-    // requested context kind plus environment, each with a concrete example.
+    // readable context kind with a concrete example, and NO environment-variable content.
     const t = wrapper.text()
     expect(t, 'section').toContain('Template variables')
     expect(t, 'data context').toContain('{{ context.data.user_id }}')
     expect(t, 'config context').toContain('{{ context.config.api_base_url }}')
     expect(t, 'node output context').toContain('{{ outputs.fetch_user.email }}')
     expect(t, 'expression functions').toContain('Expression functions')
-    expect(t, 'environment variable').toContain('OPENAI_API_KEY')
+    expect(t, 'no env vars').not.toContain('OPENAI_API_KEY')
+    expect(t, 'no server env').not.toContain('ORCH8_')
   })
 })
