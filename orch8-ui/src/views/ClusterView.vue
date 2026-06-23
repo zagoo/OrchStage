@@ -48,6 +48,21 @@ const columns: Column[] = [
   { key: '_actions', header: '', width: '60px', align: 'right' },
 ]
 
+// Heartbeat liveness light. The engine heartbeats each node about every 10s, so
+// a beat seen within HEARTBEAT_FRESH_MS means the node is reporting in → green;
+// otherwise red. This reads the node's ACTUAL heartbeat, independent of the
+// engine's stored `status` (which can lag — a reaped-then-recovered node stays
+// `stopped` while still heartbeating), so the light and the Status badge may
+// intentionally differ. Measured against the browser clock — the same basis as
+// the "x ago" text beside it, so the two can never disagree. It refreshes on
+// each 5s poll (no separate timer needed).
+const HEARTBEAT_FRESH_MS = 30_000
+
+function heartbeatFresh(ts: string): boolean {
+  const t = new Date(ts).getTime()
+  return Number.isFinite(t) && Date.now() - t <= HEARTBEAT_FRESH_MS
+}
+
 async function handleDrain(node: ClusterNode) {
   const ok = await ui.confirm({
     title: `Drain node "${node.name}"?`,
@@ -121,9 +136,17 @@ async function handleDrain(node: ClusterNode) {
       </template>
 
       <template #cell-last_heartbeat_at="{ row }">
-        <Tooltip :text="formatDateTime(row.last_heartbeat_at)">
-          <span class="text-[12px] text-subtle">{{ formatRelative(row.last_heartbeat_at) }}</span>
-        </Tooltip>
+        <span class="flex items-center gap-2">
+          <Tooltip :text="heartbeatFresh(row.last_heartbeat_at) ? 'Heartbeat healthy — node is reporting in' : 'No heartbeat in the last 30s'">
+            <StatusDot
+              :tone="heartbeatFresh(row.last_heartbeat_at) ? 'success' : 'danger'"
+              :pulse="heartbeatFresh(row.last_heartbeat_at)"
+            />
+          </Tooltip>
+          <Tooltip :text="formatDateTime(row.last_heartbeat_at)">
+            <span class="text-[12px] text-subtle">{{ formatRelative(row.last_heartbeat_at) }}</span>
+          </Tooltip>
+        </span>
       </template>
 
       <template #cell-registered_at="{ row }">
