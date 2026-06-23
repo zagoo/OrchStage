@@ -21,6 +21,8 @@ export interface SelectOption {
   value: string
   label: string
   disabled?: boolean
+  /** Arbitrary payload for rich rows — read it back via the `option`/`value` slots. */
+  data?: unknown
 }
 
 const props = withDefaults(
@@ -221,8 +223,11 @@ onBeforeUnmount(() => closeMenu(false))
     @click="toggle"
     @keydown="onKeydown"
   >
-    <span :class="['flex-1 truncate text-left', !selected && 'text-faint']">
-      {{ selected?.label ?? placeholder ?? '' }}
+    <span class="min-w-0 flex-1 text-left">
+      <!-- `value` slot lets a wrapper render a rich trigger label (default = plain text). -->
+      <slot name="value" :selected="selected">
+        <span :class="['block truncate', !selected && 'text-faint']">{{ selected?.label ?? placeholder ?? '' }}</span>
+      </slot>
     </span>
     <ChevronDown :size="15" :class="['shrink-0 text-faint transition-transform duration-150', open && 'rotate-180']" />
   </button>
@@ -236,6 +241,8 @@ onBeforeUnmount(() => closeMenu(false))
       class="anim-pop fixed z-[200] flex flex-col gap-px overflow-y-auto rounded-md border border-border-strong bg-elevated p-1 shadow-pop"
       :style="popupStyle"
     >
+      <!-- Optional column header / heading row above the options (e.g. SequenceSelect). -->
+      <slot name="listbox-header" />
       <button
         v-for="(o, i) in opts"
         :id="optionId(i)"
@@ -251,7 +258,12 @@ onBeforeUnmount(() => closeMenu(false))
         @mouseenter="!o.disabled && (activeIndex = i)"
         @click="selectAt(i)"
       >
-        <span class="flex-1 truncate text-left">{{ o.label }}</span>
+        <span class="min-w-0 flex-1 text-left">
+          <!-- `option` slot lets a wrapper render rich rows (default = plain label). -->
+          <slot name="option" :option="o" :index="i" :active="i === activeIndex" :selected="o.value === model">
+            <span class="block truncate">{{ o.label }}</span>
+          </slot>
+        </span>
         <Check v-if="o.value === model" :size="14" class="shrink-0 text-accent" />
       </button>
       <p v-if="opts.length === 0" class="px-2 py-1.5 text-[12.5px] text-faint">No options</p>

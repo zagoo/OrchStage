@@ -3,10 +3,12 @@
  * Overview tab — instance metadata KeyValues, context CodeBlock, children list.
  * DESIGN_REFERENCE §Instances §4 Get Instance, §5 Get Instance Children
  */
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Users, ExternalLink } from 'lucide-vue-next'
 import { useAsync } from '@/composables/useAsync'
+import { useConnectionStore } from '@/stores/connection'
+import { useSequencesStore } from '@/stores/sequences'
 import { getInstanceChildren } from '@/api/instances'
 import { formatDateTime, formatRelative, prettyJson, shortId } from '@/lib/format'
 import type { TaskInstance } from '@/api/types/instances'
@@ -19,11 +21,19 @@ import StateBadge from '@/components/instances/StateBadge.vue'
 
 const props = defineProps<{ instance: TaskInstance }>()
 const router = useRouter()
+const conn = useConnectionStore()
+const seqStore = useSequencesStore()
 
 const childrenLoader = useAsync((signal) => getInstanceChildren(props.instance.id, signal))
 const { data: children, loading: childrenLoading, error: childrenError } = childrenLoader
 
-onMounted(() => void childrenLoader.run())
+// Resolve sequence_id → name/version for the metadata rows below.
+const seqInfo = computed(() => seqStore.sequenceById(props.instance.sequence_id))
+
+onMounted(() => {
+  void seqStore.loadCatalog(conn.tenantId)
+  void childrenLoader.run()
+})
 
 const childColumns: Column[] = [
   { key: 'id',          header: 'ID',       mono: true, width: '200px' },
@@ -54,6 +64,10 @@ function navigateChild(row: TaskInstance) {
             <ExternalLink :size="11" />
           </router-link>
         </KeyValue>
+        <KeyValue v-if="seqInfo" label="Sequence name">{{ seqInfo.name }}</KeyValue>
+        <KeyValue v-if="seqInfo" label="Sequence version">
+          <span class="mono">v{{ seqInfo.version }}</span>
+        </KeyValue>
         <KeyValue label="Tenant">{{ instance.tenant_id }}</KeyValue>
         <KeyValue label="Namespace">
           <span class="mono">{{ instance.namespace }}</span>
@@ -72,7 +86,7 @@ function navigateChild(row: TaskInstance) {
         <KeyValue v-if="instance.next_fire_at" label="Next fire">
           <span :title="formatDateTime(instance.next_fire_at)">{{ formatRelative(instance.next_fire_at) }}</span>
         </KeyValue>
-        <KeyValue v-if="instance.idempotency_key" label="Idempotency key">
+        <KeyValue v-if="instance.idempotency_key" label="Instance Key">
           <span class="mono text-[12px]">{{ instance.idempotency_key }}</span>
         </KeyValue>
         <KeyValue v-if="instance.concurrency_key" label="Concurrency key">

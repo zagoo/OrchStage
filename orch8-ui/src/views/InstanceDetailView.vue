@@ -36,6 +36,8 @@ import {
 import type { Component } from 'vue'
 
 import { useUiStore } from '@/stores/ui'
+import { useConnectionStore } from '@/stores/connection'
+import { useSequencesStore } from '@/stores/sequences'
 import { useAsync } from '@/composables/useAsync'
 import { usePolling } from '@/composables/usePolling'
 import { getInstance, retryInstance, sendSignal, getExecutionTree } from '@/api/instances'
@@ -77,6 +79,8 @@ import EditStateModal from '@/components/instances/detail/EditStateModal.vue'
 const route = useRoute()
 const router = useRouter()
 const ui = useUiStore()
+const conn = useConnectionStore()
+const seqStore = useSequencesStore()
 
 const instanceId = computed(() => route.params.id as string)
 
@@ -99,6 +103,8 @@ watch(
 )
 
 onMounted(() => {
+  // Catalog resolves this instance's sequence_id → name/version for the header + overview.
+  void seqStore.loadCatalog(conn.tenantId)
   void loader.run()
   polling.start()
 })
@@ -224,6 +230,13 @@ function onRefresh() {
 
 // Helpers
 const inst = computed(() => instance.value as TaskInstance | null)
+// Resolve the sequence this instance runs, for the name/version shown at the top.
+const seqInfo = computed(() => seqStore.sequenceById(inst.value?.sequence_id))
+const seqLabel = computed(() => {
+  const s = seqInfo.value
+  if (s) return `${s.name} v${s.version}`
+  return inst.value ? `Sequence ${shortId(inst.value.sequence_id)}` : ''
+})
 const canRetry  = computed(() => inst.value?.state === 'failed')
 const canCancel = computed(() => inst.value && !isTerminal(inst.value.state))
 const canPause  = computed(() => inst.value?.state === 'running' || inst.value?.state === 'waiting' || inst.value?.state === 'scheduled')
@@ -253,7 +266,7 @@ const canResume = computed(() => inst.value?.state === 'paused')
       <!-- Page header -->
       <PageHeader
         :title="inst ? shortId(inst.id) : 'Instance'"
-        :description="inst ? `Sequence ${shortId(inst.sequence_id)} · ${inst.tenant_id} / ${inst.namespace}` : undefined"
+        :description="inst ? `${seqLabel} · ${inst.tenant_id} / ${inst.namespace}` : undefined"
         :icon="Cpu"
       >
         <template #breadcrumb>
@@ -333,6 +346,16 @@ const canResume = computed(() => inst.value?.state === 'paused')
 
       <!-- Key timestamps strip -->
       <div v-if="inst" class="flex flex-wrap items-center gap-x-6 gap-y-1 text-[12.5px] text-subtle">
+        <!-- Bug 5: Instance Key + Sequence name/version surfaced at the top. -->
+        <span v-if="inst.idempotency_key" class="mono">
+          Instance Key: <span class="text-text">{{ inst.idempotency_key }}</span>
+        </span>
+        <span v-if="seqInfo">
+          Sequence: <span class="text-text">{{ seqInfo.name }}</span>
+        </span>
+        <span v-if="seqInfo">
+          Version: <span class="mono text-text">v{{ seqInfo.version }}</span>
+        </span>
         <span>
           Created: <span class="text-text" :title="formatDateTime(inst.created_at)">{{ formatRelative(inst.created_at) }}</span>
         </span>
@@ -341,9 +364,6 @@ const canResume = computed(() => inst.value?.state === 'paused')
         </span>
         <span v-if="inst.next_fire_at">
           Next fire: <span class="text-text" :title="formatDateTime(inst.next_fire_at)">{{ formatRelative(inst.next_fire_at) }}</span>
-        </span>
-        <span v-if="inst.idempotency_key" class="mono">
-          Idempotency: <span class="text-text">{{ inst.idempotency_key }}</span>
         </span>
         <template v-if="inst.budget">
           <span v-if="inst.budget.max_steps != null">

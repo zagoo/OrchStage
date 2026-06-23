@@ -20,17 +20,19 @@ import { errorMessage, isApiError } from '@/api/errors'
 import {
   validateForm,
   required,
-  uuid,
   jsonRule,
   isValidJson,
 } from '@/lib/validation'
 import type { Priority } from '@/api/types/instances'
+import SequenceSelect from '@/components/sequences/SequenceSelect.vue'
+import { useSequencesStore } from '@/stores/sequences'
 
 const open = defineModel<boolean>('open', { required: true })
 const emit = defineEmits<{ created: [] }>()
 
 const ui = useUiStore()
 const conn = useConnectionStore()
+const seqStore = useSequencesStore()
 
 type Mode = 'single' | 'batch'
 const mode = ref<Mode>('single')
@@ -74,7 +76,14 @@ const priorityOptions = [
 const canSubmit = computed(() => !saving.value)
 
 watch(open, (v) => {
-  if (!v) {
+  if (v) {
+    // Force a fresh catalog every time the picker opens — this is the decision point,
+    // so it must show sequences (and versions) published since the page was loaded,
+    // not a stale cache from when the page was first opened.
+    void seqStore.loadCatalog(conn.tenantId, true)
+    return
+  }
+  {
     // reset on close
     mode.value = 'single'
     form.value = {
@@ -96,12 +105,16 @@ function validateSingle(): boolean {
     {
       sequence_id: form.value.sequence_id,
       namespace: form.value.namespace,
+      idempotency_key: form.value.idempotency_key,
       context_data: form.value.context_data,
       context_config: form.value.context_config,
     },
     {
-      sequence_id: [required('Sequence ID'), uuid('Sequence ID')],
+      // Picked from the dropdown, so it is always a real catalog id — just require a choice.
+      sequence_id: [required('Sequence')],
       namespace: [required('Namespace')],
+      // Bug 2: Instance Key is now mandatory (and the server still dedups on it).
+      idempotency_key: [required('Instance Key')],
       context_data: [jsonRule('context.data')],
       context_config: [jsonRule('context.config')],
     },
@@ -119,15 +132,21 @@ async function submitSingle() {
       ? JSON.parse(form.value.context_config) as unknown
       : undefined
 
-    await createInstance({
+    // Instance Key is required and is the server-side dedup key (unchanged logic):
+    // re-submitting the same key returns the existing instance (`deduplicated`).
+    const res = await createInstance({
       sequence_id: form.value.sequence_id.trim(),
       tenant_id: conn.tenantId ?? '',
       namespace: form.value.namespace.trim(),
       priority: form.value.priority,
-      idempotency_key: form.value.idempotency_key.trim() || null,
+      idempotency_key: form.value.idempotency_key.trim(),
       context: { data: data, config: config },
     })
-    ui.success('Instance created')
+    if (res.deduplicated) {
+      ui.info('Instance already exists', 'Returned the existing instance for this Instance Key.')
+    } else {
+      ui.success('Instance created')
+    }
     open.value = false
     emit('created')
   } catch (e) {
@@ -184,17 +203,28 @@ function submit() {
 
       <!-- Single mode -->
       <template v-if="mode === 'single'">
-        <Field label="Sequence ID" :error="errors.sequence_id" required>
-          <template #default="{ id, invalid }">
-            <Input
-              :id="id"
-              v-model="form.sequence_id"
-              :invalid="invalid"
-              placeholder="UUID of the sequence"
-              class="mono"
-            />
-          </template>
-        </Field>
+        <!-- Bug 1: pick a sequence by Name · Version · Status; its id is filled in below. -->
+        <div>
+          <Field
+            label="Sequence"
+            :error="errors.sequence_id"
+            required
+            hint="Choose by name + version; the Sequence ID is populated automatically."
+          >
+            <template #default="{ id, invalid }">
+              <SequenceSelect
+                :id="id"
+                v-model="form.sequence_id"
+                :options="seqStore.catalog"
+                :invalid="invalid"
+                placeholder="Select a sequence…"
+              />
+            </template>
+          </Field>
+          <p v-if="form.sequence_id" class="mt-1.5 text-[11.5px] text-subtle">
+            Sequence ID: <span class="mono text-text">{{ form.sequence_id }}</span>
+          </p>
+        </div>
 
         <Field label="Namespace" :error="errors.namespace" required>
           <template #default="{ id, invalid }">
@@ -213,9 +243,15 @@ function submit() {
           </template>
         </Field>
 
-        <Field label="Idempotency Key" hint="Optional — prevents duplicate creation for the same key.">
-          <template #default="{ id }">
-            <Input :id="id" v-model="form.idempotency_key" placeholder="e.g. order-ORD-42-fulfill" />
+        <!-- Bug 2: "Instance Key" (was "Idempotency Key") — required, still the dedup key. -->
+        <Field
+          label="Instance Key"
+          :error="errors.idempotency_key"
+          required
+          hint="Required — a unique key for this instance. Reusing a key returns the existing instance instead of creating a duplicate."
+        >
+          <template #default="{ id, invalid }">
+            <Input :id="id" v-model="form.idempotency_key" :invalid="invalid" placeholder="e.g. order-ORD-42-fulfill" />
           </template>
         </Field>
 

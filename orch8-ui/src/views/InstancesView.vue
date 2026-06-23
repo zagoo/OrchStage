@@ -26,6 +26,7 @@ import type { Component } from 'vue'
 import { useUiStore } from '@/stores/ui'
 import { useConnectionStore } from '@/stores/connection'
 import { useInstancesStore } from '@/stores/instances'
+import { useSequencesStore } from '@/stores/sequences'
 import { useAsync } from '@/composables/useAsync'
 import { usePolling } from '@/composables/usePolling'
 import { listInstances, batchAction } from '@/api/instances'
@@ -45,6 +46,7 @@ import Tabs from '@/components/ui/Tabs.vue'
 import Tooltip from '@/components/ui/Tooltip.vue'
 import StateBadge from '@/components/instances/StateBadge.vue'
 import CreateInstanceModal from '@/components/instances/CreateInstanceModal.vue'
+import SequenceSelect from '@/components/sequences/SequenceSelect.vue'
 import BatchActionBar from '@/components/instances/BatchActionBar.vue'
 import DlqPanel from '@/components/instances/DlqPanel.vue'
 
@@ -55,6 +57,7 @@ const router = useRouter()
 const ui = useUiStore()
 const conn = useConnectionStore()
 const instStore = useInstancesStore()
+const seqStore = useSequencesStore()
 
 // --- tabs ---
 type TabKey = 'list' | 'dlq'
@@ -104,22 +107,42 @@ function buildQuery() {
 const loader = useAsync((signal) => listInstances(buildQuery(), signal))
 const { data, loading, error, errorText } = loader
 
-const polling = usePolling(loader.run, { intervalMs: 5000, immediate: false })
+// Refresh the instances AND keep the sequence catalog current (it resolves each
+// row's sequence_id → name/version and feeds the search dropdown). The catalog call
+// is TTL-gated in the store, so the 5s poll only refetches sequences ~once a minute;
+// `force` (manual Refresh) bypasses the TTL for an immediate, authoritative update —
+// so a sequence published in another tab shows up without leaving the page.
+function refresh(force = false) {
+  void seqStore.loadCatalog(conn.tenantId, force)
+  return loader.run()
+}
+
+const polling = usePolling(() => refresh(), { intervalMs: 5000, immediate: false })
 
 onMounted(() => {
-  void loader.run()
+  void refresh()
   polling.start()
 })
 
-// client-side text search on already-fetched page
+// Resolve an instance's sequence_id → human name / version via the shared catalog.
+function seqNameLabel(row: TaskInstance): string {
+  return seqStore.sequenceById(row.sequence_id)?.name ?? shortId(row.sequence_id)
+}
+function seqVersionLabel(row: TaskInstance): string {
+  const s = seqStore.sequenceById(row.sequence_id)
+  return s ? `v${s.version}` : '—'
+}
+
+// client-side text search on already-fetched page — over the now-visible columns
+// (Instance Key, Sequence name, Namespace), not the removed id/sequence_id.
 const rows = computed<TaskInstance[]>(() => {
   const q = searchFilter.value.trim().toLowerCase()
   const all = data.value ?? []
   if (!q) return all
   return all.filter((r) =>
-    r.id.toLowerCase().includes(q) ||
+    (r.idempotency_key ?? '').toLowerCase().includes(q) ||
     r.namespace.toLowerCase().includes(q) ||
-    r.sequence_id.toLowerCase().includes(q),
+    (seqStore.sequenceById(r.sequence_id)?.name ?? '').toLowerCase().includes(q),
   )
 })
 
@@ -130,15 +153,17 @@ function changePage(newOffset: number) {
 }
 
 // --- columns ---
+// Bug 3: drop Instance ID + Sequence ID; show Instance Key, Sequence name, Version.
 const columns: Column[] = [
-  { key: '_check',       header: '',           width: '36px' },
-  { key: 'id',           header: 'ID',         width: '190px', mono: true },
-  { key: 'sequence_id',  header: 'Sequence',   width: '190px', mono: true },
-  { key: 'namespace',    header: 'Namespace',  width: '120px', mono: true },
-  { key: 'state',        header: 'State',      width: '130px' },
-  { key: 'priority',     header: 'Priority',   width: '90px' },
-  { key: 'updated_at',   header: 'Updated',    width: '150px' },
-  { key: '_actions',     header: '',           width: '60px',  align: 'right' },
+  { key: '_check',           header: '',             width: '36px' },
+  { key: 'instance_key',     header: 'Instance Key', width: '210px', mono: true },
+  { key: 'sequence_name',    header: 'Sequence',     width: '170px' },
+  { key: 'sequence_version', header: 'Version',      width: '80px' },
+  { key: 'namespace',        header: 'Namespace',    width: '120px', mono: true },
+  { key: 'state',            header: 'State',        width: '130px' },
+  { key: 'priority',         header: 'Priority',     width: '90px' },
+  { key: 'updated_at',       header: 'Updated',      width: '150px' },
+  { key: '_actions',         header: '',             width: '60px',  align: 'right' },
 ]
 
 // --- selection ---
@@ -250,7 +275,7 @@ function navigateToDetail(row: TaskInstance) {
         <Tooltip text="Polling every 5s">
           <IconButton
             label="Refresh instances"
-            @click="loader.run()"
+            @click="refresh(true)"
           >
             <RefreshCw :size="16" :class="(loading || polling.active.value) && 'animate-spin'" />
           </IconButton>
@@ -275,12 +300,15 @@ function navigateToDetail(row: TaskInstance) {
           class="h-9 w-36 rounded-md border border-border-strong bg-surface-2 px-3 text-[13px] text-text placeholder-faint focus:border-accent focus:outline-none"
           placeholder="Namespace"
         />
-        <input
+        <!-- Bug 4: pick a sequence by Name + Version; sets the sequence_id filter. -->
+        <SequenceSelect
           v-model="seqFilter"
-          class="mono h-9 w-52 rounded-md border border-border-strong bg-surface-2 px-3 text-[12px] text-text placeholder-faint focus:border-accent focus:outline-none"
-          placeholder="Sequence UUID"
+          :options="seqStore.catalog"
+          clearable
+          placeholder="All sequences"
+          class="w-60"
         />
-        <SearchInput v-model="searchFilter" placeholder="Search by ID…" class="w-48" />
+        <SearchInput v-model="searchFilter" placeholder="Search Instance Key / sequence…" class="w-56" />
         <IconButton
           v-if="hasFilters"
           label="Clear all filters"
@@ -341,12 +369,19 @@ function navigateToDetail(row: TaskInstance) {
           </button>
         </template>
 
-        <template #cell-id="{ row }">
-          <span class="mono text-[12px] text-text">{{ shortId(row.id) }}</span>
+        <template #cell-instance_key="{ row }">
+          <span v-if="row.idempotency_key" class="mono text-[12px] text-text" :title="row.idempotency_key">
+            {{ row.idempotency_key }}
+          </span>
+          <span v-else class="text-faint">—</span>
         </template>
 
-        <template #cell-sequence_id="{ row }">
-          <span class="mono text-[12px] text-subtle">{{ shortId(row.sequence_id) }}</span>
+        <template #cell-sequence_name="{ row }">
+          <span class="text-[12.5px] text-text" :title="row.sequence_id">{{ seqNameLabel(row) }}</span>
+        </template>
+
+        <template #cell-sequence_version="{ row }">
+          <span class="mono text-[12px] tabular-nums text-subtle">{{ seqVersionLabel(row) }}</span>
         </template>
 
         <template #cell-state="{ row }">

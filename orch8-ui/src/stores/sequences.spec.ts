@@ -1,10 +1,16 @@
 /**
  * Unit tests for useSequencesStore.
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useSequencesStore } from './sequences'
+import { listSequencesArray } from '@/api/sequences'
 import type { SequenceDefinition } from '@/api/types/sequences'
+
+// The catalog loader hits /sequences.json — mock it so we can assert caching/lookup
+// without a network. errorMessage() is exercised by the failure case.
+vi.mock('@/api/sequences', () => ({ listSequencesArray: vi.fn() }))
+const listMock = vi.mocked(listSequencesArray)
 
 function makeSeq(id = 'seq-1', name = 'My Sequence'): SequenceDefinition {
   return {
@@ -26,6 +32,7 @@ function makeSeq(id = 'seq-1', name = 'My Sequence'): SequenceDefinition {
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  listMock.mockReset()
 })
 
 describe('useSequencesStore', () => {
@@ -87,6 +94,67 @@ describe('useSequencesStore', () => {
       store.versionsError = 'load failed'
       expect(store.versionsLoading).toBe(true)
       expect(store.versionsError).toBe('load failed')
+    })
+  })
+
+  describe('catalog (sequence id → name/version/status)', () => {
+    it('loadCatalog fetches once and builds the id lookup', async () => {
+      const seqs = [makeSeq('id-a', 'alpha'), makeSeq('id-b', 'beta')]
+      listMock.mockResolvedValue(seqs)
+      const store = useSequencesStore()
+
+      await store.loadCatalog('tenant-a')
+
+      expect(listMock).toHaveBeenCalledTimes(1)
+      expect(store.catalog).toHaveLength(2)
+      expect(store.catalogLoaded).toBe(true)
+      expect(store.sequenceById('id-b')?.name).toBe('beta')
+      expect(store.sequenceById('missing')).toBeUndefined()
+      expect(store.sequenceById(null)).toBeUndefined()
+    })
+
+    it('caches: a second call for the same tenant does NOT refetch', async () => {
+      listMock.mockResolvedValue([makeSeq()])
+      const store = useSequencesStore()
+      await store.loadCatalog('tenant-a')
+      await store.loadCatalog('tenant-a')
+      expect(listMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('refetches when the tenant changes or force is set', async () => {
+      listMock.mockResolvedValue([makeSeq()])
+      const store = useSequencesStore()
+      await store.loadCatalog('tenant-a')
+      await store.loadCatalog('tenant-b') // different tenant → reload
+      await store.loadCatalog('tenant-b', true) // force → reload
+      expect(listMock).toHaveBeenCalledTimes(3)
+    })
+
+    it('refetches once the cache TTL (60s) has elapsed — no stale catalog after idle', async () => {
+      // Simulates the "left the page for half an hour, then came back" case: a
+      // cached catalog older than the TTL must refetch on the next touch.
+      const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
+      listMock.mockResolvedValue([makeSeq('id-a', 'v1-only')])
+      const store = useSequencesStore()
+
+      await store.loadCatalog('tenant-a') // fetch #1
+      await store.loadCatalog('tenant-a') // fresh (same instant) → cached, still 1
+      expect(listMock).toHaveBeenCalledTimes(1)
+
+      nowSpy.mockReturnValue(1_000_000 + 61_000) // +61s → past the 60s TTL
+      await store.loadCatalog('tenant-a') // stale → fetch #2
+      expect(listMock).toHaveBeenCalledTimes(2)
+
+      nowSpy.mockRestore()
+    })
+
+    it('degrades gracefully on error — records catalogError, leaves catalog empty', async () => {
+      listMock.mockRejectedValue(new Error('boom'))
+      const store = useSequencesStore()
+      await store.loadCatalog('tenant-a')
+      expect(store.catalog).toEqual([])
+      expect(store.catalogError).toBeTruthy()
+      expect(store.catalogLoaded).toBe(false)
     })
   })
 })
