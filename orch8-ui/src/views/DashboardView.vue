@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
 import { LayoutDashboard, Server, Cpu, ArrowRight } from 'lucide-vue-next'
 import { useConnectionStore } from '@/stores/connection'
@@ -18,10 +17,8 @@ const cardGroups = navGroups
   .filter((g) => g.items.length > 0)
 
 const tone: Record<string, DotTone> = { ok: 'success', error: 'danger', checking: 'info', unknown: 'neutral' }
-
-onMounted(() => {
-  if (conn.status === 'unknown') void conn.check()
-})
+// The initial health check is kicked once by AppShell (covers every route on a
+// hard refresh). The "Refresh status" button below still re-checks on demand.
 </script>
 
 <template>

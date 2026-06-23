@@ -9,9 +9,16 @@ import EnvBanner from './EnvBanner.vue'
 const conn = useConnectionStore()
 
 onMounted(() => {
-  // Ensure /info (version + env banner) is loaded even on a hydrated session
-  // that didn't pass through the connect/dashboard check() path.
-  if (conn.configured && !conn.info) void conn.loadInfo()
+  // Establish connection state once for the whole shell. On a hard browser
+  // refresh the Pinia store is fresh (status 'unknown'), and AppShell wraps
+  // every authenticated route — so this is the one place that must kick the
+  // health check. Previously only DashboardView did, which left a refresh on
+  // any non-Dashboard page showing "Not checked" in the Topbar (and a blank
+  // connection panel on Settings) until the user happened to open the Dashboard.
+  // check() also fetches /info (version + env banner), so it subsumes loadInfo().
+  if (!conn.configured) return
+  if (conn.status === 'unknown') void conn.check()
+  else if (!conn.info) void conn.loadInfo()
 })
 </script>
 
