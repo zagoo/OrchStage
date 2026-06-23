@@ -210,4 +210,43 @@ describe('useConnectionStore', () => {
       expect(store.engineVersion).toBe('1.2.3')
     })
   })
+
+  describe('env banner getters (env_label / env_color)', () => {
+    it('return null when info is null or the fields are absent/blank', () => {
+      const store = useConnectionStore()
+      expect(store.envLabel).toBeNull()
+      expect(store.envColor).toBeNull()
+      store.info = { version: '1.0.0', env_label: '   ', env_color: '' }
+      expect(store.envLabel).toBeNull()
+      expect(store.envColor).toBeNull()
+    })
+
+    it('expose trimmed env_label / env_color from info', () => {
+      const store = useConnectionStore()
+      store.info = { env_label: ' PRODUCTION ', env_color: '#b91c1c' }
+      expect(store.envLabel).toBe('PRODUCTION')
+      expect(store.envColor).toBe('#b91c1c')
+    })
+  })
+
+  describe('loadInfo()', () => {
+    it('fetches /info into info without changing connection status', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+        ok: true, status: 200, headers: new Headers(),
+        text: () => Promise.resolve(JSON.stringify({ version: '2.0.0', env_label: 'STAGING' })),
+      }))
+      const store = useConnectionStore()
+      await store.loadInfo()
+      expect(store.info).toEqual({ version: '2.0.0', env_label: 'STAGING' })
+      expect(store.envLabel).toBe('STAGING')
+      expect(store.status).toBe('unknown') // loadInfo must not flip connection status
+    })
+
+    it('swallows /info failures (best-effort chrome)', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('boom')))
+      const store = useConnectionStore()
+      await store.loadInfo()
+      expect(store.info).toBeNull()
+    })
+  })
 })

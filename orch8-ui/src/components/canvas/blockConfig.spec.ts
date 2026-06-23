@@ -154,6 +154,20 @@ describe('HANDLER_PARAM_SPEC is the single source of truth (round 13)', () => {
       for (const d of defs) expect(d.desc.length, `${h}.${d.name} desc`).toBeGreaterThan(5)
     }
   })
+
+  it('exposes self_modify (engine builtin) with required blocks + optional, template-omitted position', () => {
+    expect(STEP_HANDLERS).toContain('self_modify')
+    const defs = HANDLER_PARAM_SPEC.self_modify
+    expect(defs, 'self_modify spec').toBeDefined()
+    const blocks = defs.find((d) => d.name === 'blocks')
+    expect(blocks?.required, 'blocks is required').toBe(true)
+    expect(blocks?.type, 'blocks is an array').toBe('array')
+    const position = defs.find((d) => d.name === 'position')
+    expect(position, 'position param listed').toBeDefined()
+    expect(position?.required, 'position is optional').toBeFalsy()
+    // No example → kept OUT of the starter template (append-by-default).
+    expect(position?.example, 'position omitted from starter template').toBeUndefined()
+  })
 })
 
 describe('missingHandlerParams — required-param validation (Bug 3)', () => {

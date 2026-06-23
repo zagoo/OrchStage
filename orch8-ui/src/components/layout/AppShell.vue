@@ -1,23 +1,37 @@
 <script setup lang="ts">
+import { onMounted } from 'vue'
 import { RouterView } from 'vue-router'
+import { useConnectionStore } from '@/stores/connection'
 import Sidebar from './Sidebar.vue'
 import Topbar from './Topbar.vue'
+import EnvBanner from './EnvBanner.vue'
+
+const conn = useConnectionStore()
+
+onMounted(() => {
+  // Ensure /info (version + env banner) is loaded even on a hydrated session
+  // that didn't pass through the connect/dashboard check() path.
+  if (conn.configured && !conn.info) void conn.loadInfo()
+})
 </script>
 
 <template>
-  <div class="flex h-screen overflow-hidden bg-bg text-text">
-    <Sidebar />
-    <div class="flex min-w-0 flex-1 flex-col">
-      <Topbar />
-      <main class="flex flex-1 flex-col overflow-y-auto">
-        <div class="mx-auto flex w-full max-w-[1640px] flex-1 flex-col px-6 py-6">
-          <RouterView v-slot="{ Component, route }">
-            <Transition name="page" mode="out-in">
-              <component :is="Component" :key="route.path" />
-            </Transition>
-          </RouterView>
-        </div>
-      </main>
+  <div class="flex h-screen flex-col overflow-hidden bg-bg text-text">
+    <EnvBanner />
+    <div class="flex min-h-0 flex-1 overflow-hidden">
+      <Sidebar />
+      <div class="flex min-w-0 flex-1 flex-col">
+        <Topbar />
+        <main class="flex flex-1 flex-col overflow-y-auto">
+          <div class="mx-auto flex w-full max-w-[1640px] flex-1 flex-col px-6 py-6">
+            <RouterView v-slot="{ Component, route }">
+              <Transition name="page" mode="out-in">
+                <component :is="Component" :key="route.path" />
+              </Transition>
+            </RouterView>
+          </div>
+        </main>
+      </div>
     </div>
   </div>
 </template>

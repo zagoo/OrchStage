@@ -47,6 +47,16 @@ export const useConnectionStore = defineStore('connection', {
       const v = s.info?.version
       return typeof v === 'string' ? v : '—'
     },
+    /** Operator-set environment label from GET /info (ORCH8_ENV_LABEL), or null. */
+    envLabel: (s): string | null => {
+      const v = s.info?.env_label
+      return typeof v === 'string' && v.trim().length > 0 ? v.trim() : null
+    },
+    /** Operator-set environment color from GET /info (ORCH8_ENV_COLOR), or null. */
+    envColor: (s): string | null => {
+      const v = s.info?.env_color
+      return typeof v === 'string' && v.trim().length > 0 ? v.trim() : null
+    },
   },
 
   actions: {
@@ -107,6 +117,19 @@ export const useConnectionStore = defineStore('connection', {
         localStorage.removeItem(STORAGE_KEY)
       } catch {
         /* noop */
+      }
+    },
+
+    /**
+     * Fetch the unauthenticated /info (engine version + environment banner)
+     * without touching connection status. Safe to call on app boot; failures
+     * are swallowed because /info is cosmetic chrome, not a health signal.
+     */
+    async loadInfo(): Promise<void> {
+      try {
+        this.info = await http.get<Record<string, unknown>>('/info')
+      } catch {
+        /* /info is best-effort; ignore */
       }
     },
 

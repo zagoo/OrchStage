@@ -209,6 +209,7 @@ export const STEP_HANDLERS: string[] = [
   'get_state',
   'delete_state',
   'merge_state',
+  'self_modify',
   'embed',
   'fail',
   'noop',
@@ -242,6 +243,7 @@ export const HANDLER_DESCRIPTION: Record<string, string> = {
   get_state: 'Reads a key from this instance state.',
   delete_state: 'Removes a key from this instance state.',
   merge_state: 'Merges an object into this instance state.',
+  self_modify: 'Injects new blocks into THIS running sequence at runtime — advanced; enables agent self-modification.',
   embed: 'Computes a vector embedding for the input text.',
   fail: 'Deliberately fails this step with a message and code.',
   noop: 'Does nothing — a placeholder / no-op step.',
@@ -465,6 +467,10 @@ export const HANDLER_PARAM_SPEC: Record<string, HandlerParamDef[]> = {
   get_state: [{ name: 'key', type: 'string', required: true, example: '', desc: 'State key to read (value is null if absent).' }],
   delete_state: [{ name: 'key', type: 'string', required: true, example: '', desc: 'State key to remove.' }],
   merge_state: [{ name: 'values', type: 'object', requiredPresent: true, example: {}, desc: 'Object whose entries are merged into instance state (empty object allowed).' }],
+  self_modify: [
+    { name: 'blocks', type: 'array', required: true, example: [{ id: 'dynamic_step', type: 'step', handler: 'log', params: { message: 'injected at runtime' } }], desc: 'Block definitions to inject into THIS running sequence (validated as BlockDefinition[]).' },
+    { name: 'position', type: 'integer', min: 0, desc: '0-indexed position to insert at; omit to append at the end.' },
+  ],
   embed: [
     { name: 'input', type: 'string', required: true, example: '', desc: 'Text (or array of texts) to embed.' },
     { name: 'model', type: 'string', default: 'text-embedding-3-small', example: 'text-embedding-3-small', desc: 'Embedding model.' },

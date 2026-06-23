@@ -9,6 +9,7 @@ import { useUiStore } from '@/stores/ui'
 import { useAsync } from '@/composables/useAsync'
 import { listCheckpoints, saveCheckpoint, pruneCheckpoints } from '@/api/instancesAdvanced'
 import { resumeFromBlock } from '@/api/instances'
+import { parseInjectedSignals } from '@/lib/signals'
 import { errorMessage } from '@/api/errors'
 import { formatRelative, formatDateTime, prettyJson } from '@/lib/format'
 import type { Checkpoint } from '@/api/types/instancesAdvanced'
@@ -31,6 +32,13 @@ const createJsonError = ref<string | null>(null)
 const creating = ref(false)
 const showDetail = ref(false)
 const selectedCp = ref<Checkpoint | null>(null)
+
+// Resume-from-block (restore) modal state.
+const showRestore = ref(false)
+const restoreBlock = ref<string | null>(null)
+const restoreSignalsJson = ref('')
+const restoreError = ref<string | null>(null)
+const restoring = ref(false)
 
 const loader = useAsync((signal) => listCheckpoints(props.instanceId, signal))
 const { data: checkpoints, loading, error } = loader
@@ -60,26 +68,35 @@ async function handleCreate() {
   }
 }
 
-async function handleRestore(cp: Checkpoint) {
-  const ok = await ui.confirm({
-    title: 'Restore from checkpoint?',
-    message: `This will resume the instance from checkpoint ${cp.id.slice(0, 8)}…. The instance must be in a quiescent state (failed/paused/completed/cancelled).`,
-    tone: 'danger',
-    confirmText: 'Restore',
-  })
-  if (!ok) return
-  // A checkpoint "restore" is implemented as resume-from-block using
-  // the block stored in checkpoint_data.completed_blocks (last entry).
+// A checkpoint "restore" is implemented as resume-from-block using the block
+// stored in checkpoint_data.completed_blocks (last entry). Opens the restore
+// modal, which lets the operator optionally inject signals atomically.
+function handleRestore(cp: Checkpoint) {
   const data = cp.checkpoint_data as Record<string, unknown>
   const blocks = Array.isArray(data.completed_blocks) ? (data.completed_blocks as string[]) : []
   const targetBlock = blocks[blocks.length - 1]
   if (!targetBlock) { ui.error('No block in checkpoint', 'checkpoint_data.completed_blocks is empty.'); return }
+  restoreBlock.value = targetBlock
+  restoreSignalsJson.value = ''
+  restoreError.value = null
+  showRestore.value = true
+}
+
+async function confirmRestore() {
+  const block = restoreBlock.value
+  if (!block) return
+  const { signals, error } = parseInjectedSignals(restoreSignalsJson.value)
+  if (error) { restoreError.value = error; return }
+  restoring.value = true
   try {
-    await resumeFromBlock(props.instanceId, targetBlock, {})
-    ui.success('Restored', `Resuming from block: ${targetBlock}`)
+    await resumeFromBlock(props.instanceId, block, { ...(signals ? { signals } : {}) })
+    ui.success('Resumed', `Resuming from block: ${block}`)
+    showRestore.value = false
     void loader.run()
   } catch (e) {
-    ui.error('Restore failed', errorMessage(e))
+    ui.error('Resume failed', errorMessage(e))
+  } finally {
+    restoring.value = false
   }
 }
 
@@ -189,5 +206,40 @@ function openDetail(cp: Checkpoint) {
   <!-- Detail modal -->
   <Modal v-if="selectedCp" v-model:open="showDetail" title="Checkpoint Data" size="lg">
     <CodeBlock :content="prettyJson(selectedCp.checkpoint_data)" language="json" />
+  </Modal>
+
+  <!-- Resume-from-block (restore) modal -->
+  <Modal v-model:open="showRestore" title="Resume from block" size="md">
+    <div class="flex flex-col gap-4">
+      <p class="text-[13px] text-muted">
+        Resume this instance from block
+        <span class="mono text-text">{{ restoreBlock }}</span>. Outputs for that block and every block
+        after it are cleared and re-executed; earlier outputs are kept. The instance must be quiescent
+        (failed / paused / completed / cancelled).
+      </p>
+      <Field
+        label="Inject signals (optional, JSON array)"
+        :error="restoreError"
+        hint='signal_type: pause | resume | cancel | update_context, or { "custom": "name" }. Enqueued atomically before the instance runs.'
+      >
+        <template #default="{ id, invalid }">
+          <Textarea
+            :id="id"
+            v-model="restoreSignalsJson"
+            :rows="3"
+            :invalid="!!invalid"
+            class="mono text-[12px]"
+            placeholder='[{ "signal_type": { "custom": "approval" }, "payload": { "ok": true } }]'
+          />
+        </template>
+      </Field>
+    </div>
+    <template #footer="{ close }">
+      <Button variant="ghost" @click="close">Cancel</Button>
+      <Button variant="primary" :loading="restoring" @click="confirmRestore">
+        <template #icon><RotateCcw :size="13" /></template>
+        Resume
+      </Button>
+    </template>
   </Modal>
 </template>

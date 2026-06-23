@@ -41,6 +41,7 @@ import { useSequencesStore } from '@/stores/sequences'
 import { useAsync } from '@/composables/useAsync'
 import { usePolling } from '@/composables/usePolling'
 import { getInstance, retryInstance, sendSignal, getExecutionTree } from '@/api/instances'
+import { getOutputs } from '@/api/instancesAdvanced'
 import { errorMessage } from '@/api/errors'
 import { formatRelative, formatDateTime, shortId } from '@/lib/format'
 import { isTerminal } from '@/api/types/instances'
@@ -143,6 +144,22 @@ const tabs: TabItem[] = [
 const treeLoader = useAsync((signal) => getExecutionTree(instanceId.value, signal))
 const { data: treeNodes, loading: treeLoading, error: treeError } = treeLoader
 
+// --- SLA breach sentinels ----------------------------------------------------
+// The scheduler records an SLA breach as a reserved `_sla:*` block output
+// (engine scheduler.rs). Fetched lazily and only for sequences that declare an
+// `sla` policy (see the watcher below) — the sole case a breach can exist — so
+// the common path costs nothing.
+const slaLoader = useAsync((signal) => getOutputs(instanceId.value, signal))
+const { data: slaOutputs } = slaLoader
+const slaBreaches = computed(() =>
+  (slaOutputs.value ?? [])
+    .filter((o) => o.block_id.startsWith('_sla:'))
+    .map((o) => {
+      const out = (o.output ?? {}) as Record<string, unknown>
+      return { block_id: o.block_id, kind: typeof out._sla_breach === 'string' ? out._sla_breach : o.block_id }
+    }),
+)
+
 watch(activeTab, (tab) => {
   if (tab === 'tree' && !treeNodes.value) {
     void treeLoader.run()
@@ -226,6 +243,7 @@ async function handleCancel() {
 function onRefresh() {
   void loader.run()
   if (activeTab.value === 'tree') void treeLoader.run()
+  if (slaOutputs.value) void slaLoader.run()
 }
 
 // Helpers
@@ -241,6 +259,34 @@ const canRetry  = computed(() => inst.value?.state === 'failed')
 const canCancel = computed(() => inst.value && !isTerminal(inst.value.state))
 const canPause  = computed(() => inst.value?.state === 'running' || inst.value?.state === 'waiting' || inst.value?.state === 'scheduled')
 const canResume = computed(() => inst.value?.state === 'paused')
+
+// Budget breach: the scheduler pauses an over-budget instance and records the
+// reason on `metadata` BEFORE the state flip (engine scheduler/step_exec.rs),
+// so a Paused instance is guaranteed to carry this when budget is the cause.
+interface BudgetBreachInfo { limit: string; limit_value: number; actual: number }
+const budgetBreach = computed<BudgetBreachInfo | null>(() => {
+  const m = inst.value?.metadata
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return null
+  const meta = m as Record<string, unknown>
+  if (meta.paused_reason !== 'budget_exceeded') return null
+  const b = meta.budget_breach
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return null
+  const bb = b as Record<string, unknown>
+  return {
+    limit: typeof bb.limit === 'string' ? bb.limit : 'budget',
+    limit_value: typeof bb.limit_value === 'number' ? bb.limit_value : 0,
+    actual: typeof bb.actual === 'number' ? bb.actual : 0,
+  }
+})
+
+// Only probe the `_sla:*` sentinels for sequences that declare an SLA policy.
+watch(
+  () => seqInfo.value?.sla,
+  (sla) => {
+    if (sla && !slaOutputs.value && !slaLoader.loading.value) void slaLoader.run()
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -278,6 +324,8 @@ const canResume = computed(() => inst.value?.state === 'paused')
         <template #actions>
           <!-- State badge -->
           <StateBadge v-if="inst" :state="inst.state" show-dot />
+          <Badge v-if="budgetBreach" tone="danger">Budget exceeded</Badge>
+          <Badge v-if="slaBreaches.length" tone="warning">SLA breached</Badge>
 
           <Tooltip v-if="polling.active.value" text="Polling every 5s">
             <IconButton label="Refresh" @click="onRefresh">
@@ -365,6 +413,32 @@ const canResume = computed(() => inst.value?.state === 'paused')
           </span>
         </template>
         <Badge v-if="inst.context.runtime?.dry_run" tone="purple">dry-run</Badge>
+      </div>
+
+      <!-- Breach callouts — surface WHY an instance paused (budget) or tripped
+           an alert (SLA), visible from any tab. -->
+      <div v-if="inst && (budgetBreach || slaBreaches.length)" class="flex flex-col gap-2">
+        <div
+          v-if="budgetBreach"
+          class="flex flex-wrap items-center gap-2 rounded-lg border border-danger/30 bg-danger-soft px-4 py-2.5 text-[12.5px] text-danger"
+        >
+          <Badge tone="danger">Budget exceeded</Badge>
+          <span>
+            <span class="mono">{{ budgetBreach.limit }}</span> reached
+            {{ budgetBreach.actual.toLocaleString() }} (limit {{ budgetBreach.limit_value.toLocaleString() }})
+            — instance paused. Resume after raising the budget or accepting the spend.
+          </span>
+        </div>
+        <div
+          v-if="slaBreaches.length"
+          class="flex flex-wrap items-center gap-2 rounded-lg border border-warning/30 bg-warning-soft px-4 py-2.5 text-[12.5px] text-warning"
+        >
+          <Badge tone="warning">SLA breached</Badge>
+          <span>
+            Exceeded {{ slaBreaches.map((b) => b.kind).join(', ') }} (alert-only — the run was not
+            paused or failed; an <span class="mono">instance.sla_breached</span> webhook was emitted).
+          </span>
+        </div>
       </div>
 
       <!-- Skeleton while loading -->

@@ -10,6 +10,7 @@ import { useUiStore } from '@/stores/ui'
 import { forkInstance } from '@/api/instancesAdvanced'
 import { errorMessage } from '@/api/errors'
 import { validateForm, required, jsonRule } from '@/lib/validation'
+import { parseInjectedSignals } from '@/lib/signals'
 import type { ForkResponse } from '@/api/types/instancesAdvanced'
 import Modal from '@/components/ui/Modal.vue'
 import Button from '@/components/ui/Button.vue'
@@ -25,6 +26,7 @@ const ui = useUiStore()
 
 const fromBlockId = ref('')
 const contextPatch = ref('')
+const signalsJson = ref('')
 const dryRun = ref(true)
 const submitting = ref(false)
 const errors = ref<Record<string, string | null>>({})
@@ -33,6 +35,7 @@ watch(open, (v) => {
   if (v) {
     fromBlockId.value = ''
     contextPatch.value = ''
+    signalsJson.value = ''
     dryRun.value = true
     errors.value = {}
   }
@@ -52,6 +55,8 @@ function validate(): boolean {
 
 async function handleFork() {
   if (!validate()) return
+  const { signals, error: signalsError } = parseInjectedSignals(signalsJson.value)
+  if (signalsError) { errors.value = { ...errors.value, signals: signalsError }; return }
   let context: Record<string, unknown> | null = null
   if (contextPatch.value.trim()) {
     try { context = JSON.parse(contextPatch.value) as Record<string, unknown> } catch { return }
@@ -62,6 +67,7 @@ async function handleFork() {
       from_block_id: fromBlockId.value.trim(),
       context,
       dry_run: dryRun.value,
+      ...(signals ? { signals } : {}),
     })
     ui.success('Fork created', `Instance ${result.id.slice(0, 8)}… (dry_run=${result.dry_run})`)
     open.value = false
@@ -101,6 +107,16 @@ async function handleFork() {
       >
         <template #default="{ id, invalid }">
           <Textarea :id="id" v-model="contextPatch" :rows="4" :invalid="!!invalid" class="mono text-[12px]" placeholder='{ "feature_flag": true }' />
+        </template>
+      </Field>
+
+      <Field
+        label="Inject signals (optional, JSON array)"
+        :error="errors.signals"
+        hint='signal_type: pause | resume | cancel | update_context, or { "custom": "name" }. Enqueued atomically before the fork runs.'
+      >
+        <template #default="{ id, invalid }">
+          <Textarea :id="id" v-model="signalsJson" :rows="3" :invalid="!!invalid" class="mono text-[12px]" placeholder='[{ "signal_type": { "custom": "approval" }, "payload": { "ok": true } }]' />
         </template>
       </Field>
 
