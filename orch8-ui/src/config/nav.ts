@@ -101,12 +101,16 @@ export const navGroups: NavGroup[] = [
   },
   {
     label: 'Edge',
-    items: [{ label: 'Mobile Sync', to: '/mobile', icon: Smartphone }],
+    // '/edge/mobile', not '/mobile': the latter is shadowed by the engine's root
+    // /mobile/* routes on a hard refresh (proxy forwards /mobile*).
+    items: [{ label: 'Mobile Sync', to: '/edge/mobile', icon: Smartphone }],
   },
   {
     label: 'System',
     items: [
-      { label: 'API Keys', to: '/api-keys', icon: KeySquare },
+      // '/admin/api-keys', not '/api-keys': the latter is shadowed by the engine's
+      // root-mounted /api-keys REST endpoint on a hard refresh (proxy forwards /api*).
+      { label: 'API Keys', to: '/admin/api-keys', icon: KeySquare },
       { label: 'Settings', to: '/settings', icon: Settings },
     ],
   },

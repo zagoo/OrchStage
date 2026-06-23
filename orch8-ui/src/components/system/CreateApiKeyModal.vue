@@ -27,7 +27,9 @@ import CopyButton from '@/components/ui/CopyButton.vue'
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{
   'update:open': [value: boolean]
-  created: []
+  // Carry the new key's tenant so the list can switch its filter to it — a key
+  // minted for another tenant is otherwise invisible under the current filter.
+  created: [tenantId: string]
 }>()
 
 const open = computed({
@@ -74,7 +76,7 @@ async function submit() {
     createdKey.value = key
     acknowledged.value = false
     ui.success('API key created', `"${key.name || key.id}" — copy the secret now!`)
-    emit('created')
+    emit('created', key.tenant_id)
   } catch (e) {
     ui.error('Failed to create key', errorMessage(e))
   } finally {

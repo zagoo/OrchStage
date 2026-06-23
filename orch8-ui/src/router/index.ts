@@ -65,10 +65,22 @@ const shellChildren: RouteRecordRaw[] = [
   { path: 'audit', name: 'audit', component: () => import('@/views/AuditView.vue'),
     meta: { title: 'Audit Log', blurb: 'State-transition and operator audit trail.' } },
 
-  { path: 'mobile', name: 'mobile', component: () => import('@/views/MobileView.vue'),
+  // Route path is '/edge/mobile', deliberately NOT '/mobile': the dev/preview proxy
+  // forwards every path starting with '/mobile' to orch8-server, so a client route at
+  // '/mobile' is shadowed by the engine on a hard browser refresh (GET /mobile → 404,
+  // not the SPA shell). Same collision class as the '/admin/api-keys' route below.
+  // (The API client still calls '/api/v1/mobile/*'.)
+  { path: 'edge/mobile', name: 'mobile', component: () => import('@/views/MobileView.vue'),
     meta: { title: 'Mobile Sync', blurb: 'Mobile delta sync, devices, and approval relay (conditional surface).', endpoints: ['GET /mobile/status', 'GET /mobile/devices', 'GET /mobile/approvals', 'POST /mobile/commands'] } },
 
-  { path: 'api-keys', name: 'api-keys', component: () => import('@/views/ApiKeysView.vue'),
+  // Route path is '/admin/api-keys', deliberately NOT '/api-keys'. The dev/preview
+  // proxy forwards every path starting with '/api' to orch8-server, and the engine
+  // mounts the API-key REST endpoints at the root path '/api-keys'. A client route
+  // literally at '/api-keys' is therefore shadowed by the API on a hard browser
+  // refresh — GET /api-keys reaches the engine (401 for a keyless navigation)
+  // instead of the SPA shell. Keeping the route out of the '/api*' namespace lets a
+  // refresh fall through to index.html. (The API client still calls '/api-keys'.)
+  { path: 'admin/api-keys', name: 'api-keys', component: () => import('@/views/ApiKeysView.vue'),
     meta: { title: 'API Keys', blurb: 'Tenant/root API key management (admin only).', endpoints: ['GET /api-keys', 'POST /api-keys', 'DELETE /api-keys/{id}'] } },
   { path: 'settings', name: 'settings', component: () => import('@/views/SettingsView.vue'),
     meta: { title: 'Settings', requiresConnection: false } },

@@ -27,6 +27,7 @@ import Button from '@/components/ui/Button.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import DataTable from '@/components/ui/DataTable.vue'
 import Badge from '@/components/ui/Badge.vue'
+import Input from '@/components/ui/Input.vue'
 
 import CreateApiKeyModal from '@/components/system/CreateApiKeyModal.vue'
 
@@ -42,13 +43,23 @@ const likelyNonAdmin = computed(
   () => conn.configured && !conn.insecure && conn.hasTenant && conn.apiKey.trim().startsWith('sk_'),
 )
 
-// List uses the connection's tenantId if present; root callers can pass any.
-const tenantFilter = computed(() => conn.tenantId.trim())
+// The engine's GET /api-keys lists exactly ONE tenant — the required tenant_id
+// query param — with no all-tenants mode, even for the root key (the root key
+// AUTHORIZES the call; it does not widen its SCOPE). So the list is keyed by an
+// editable tenant filter, seeded from the connection tenant but decoupled from
+// it: a root operator can view tenant B/C/D's keys here without changing their
+// global connection tenant in Settings.
+const tenantFilter = ref(conn.tenantId.trim() || 'default')
 
 const list = useAsync((signal) =>
-  listApiKeys({ tenant_id: tenantFilter.value || 'default' }, signal),
+  listApiKeys({ tenant_id: tenantFilter.value.trim() || 'default' }, signal),
 )
 const { data: keys, loading, error, errorText } = list
+
+function loadKeys() {
+  if (!tenantFilter.value.trim()) tenantFilter.value = 'default'
+  void list.run()
+}
 
 onMounted(() => {
   void list.run()
@@ -83,7 +94,12 @@ async function handleRevoke(key: ApiKeyInfo) {
   }
 }
 
-function onCreated() {
+// A new key belongs to whatever tenant was entered in the modal, which may
+// differ from the one currently listed. Switch the filter to it so the key is
+// visible immediately (the "I created it for B but don't see it" report).
+function onCreated(tenantId: string) {
+  const t = tenantId.trim()
+  if (t) tenantFilter.value = t
   void list.run()
 }
 </script>
@@ -139,6 +155,28 @@ function onCreated() {
     >
       {{ errorText }}
       <button class="ml-2 underline" @click="list.run()">Retry</button>
+    </div>
+
+    <!-- Tenant scope: the engine lists keys one tenant at a time (the root key can
+         pick any). Decoupled from the global connection tenant so an admin can view
+         B/C/D here without re-pointing their whole session. -->
+    <div class="mb-4 flex flex-wrap items-end gap-3">
+      <div class="flex flex-col gap-1">
+        <label for="apikeys-tenant" class="text-[12px] font-medium text-subtle">Tenant</label>
+        <Input
+          id="apikeys-tenant"
+          v-model="tenantFilter"
+          mono
+          placeholder="acme"
+          class="w-56"
+          @keyup.enter="loadKeys"
+        />
+      </div>
+      <Button variant="secondary" :loading="loading" @click="loadKeys">List keys</Button>
+      <p class="max-w-md flex-1 text-[12px] leading-snug text-faint">
+        The server returns keys for one tenant at a time — with the root key you can view any tenant.
+        Change this to see another tenant's keys; creating a key for a new tenant switches here automatically.
+      </p>
     </div>
 
     <DataTable
