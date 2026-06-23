@@ -392,15 +392,13 @@ watch(
         </template>
       </PageHeader>
 
-      <!-- Key timestamps strip — Instance Key is the page title and the sequence
-           name/version are in the header description, so they're not repeated here. -->
-      <div v-if="inst" class="flex flex-wrap items-center gap-x-6 gap-y-1 text-[12.5px] text-subtle">
-        <span>
-          Created: <span class="text-text" :title="formatDateTime(inst.created_at)">{{ formatRelative(inst.created_at) }}</span>
-        </span>
-        <span>
-          Updated: <span class="text-text" :title="formatDateTime(inst.updated_at)">{{ formatRelative(inst.updated_at) }}</span>
-        </span>
+      <!-- Key status strip — Instance Key is the page title and the sequence
+           name/version are in the header description, so they're not repeated here.
+           Created/Updated live in the Overview tab's metadata table, not here. -->
+      <div
+        v-if="inst && (inst.next_fire_at || inst.budget || inst.context.runtime?.dry_run)"
+        class="flex flex-wrap items-center gap-x-6 gap-y-1 text-[12.5px] text-subtle"
+      >
         <span v-if="inst.next_fire_at">
           Next fire: <span class="text-text" :title="formatDateTime(inst.next_fire_at)">{{ formatRelative(inst.next_fire_at) }}</span>
         </span>
