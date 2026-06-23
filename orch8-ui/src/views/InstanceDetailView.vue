@@ -265,7 +265,7 @@ const canResume = computed(() => inst.value?.state === 'paused')
     <template v-else>
       <!-- Page header -->
       <PageHeader
-        :title="inst ? shortId(inst.id) : 'Instance'"
+        :title="inst ? (inst.idempotency_key || shortId(inst.id)) : 'Instance'"
         :description="inst ? `${seqLabel} · ${inst.tenant_id} / ${inst.namespace}` : undefined"
         :icon="Cpu"
       >
@@ -344,18 +344,9 @@ const canResume = computed(() => inst.value?.state === 'paused')
         </template>
       </PageHeader>
 
-      <!-- Key timestamps strip -->
+      <!-- Key timestamps strip — Instance Key is the page title and the sequence
+           name/version are in the header description, so they're not repeated here. -->
       <div v-if="inst" class="flex flex-wrap items-center gap-x-6 gap-y-1 text-[12.5px] text-subtle">
-        <!-- Bug 5: Instance Key + Sequence name/version surfaced at the top. -->
-        <span v-if="inst.idempotency_key" class="mono">
-          Instance Key: <span class="text-text">{{ inst.idempotency_key }}</span>
-        </span>
-        <span v-if="seqInfo">
-          Sequence: <span class="text-text">{{ seqInfo.name }}</span>
-        </span>
-        <span v-if="seqInfo">
-          Version: <span class="mono text-text">v{{ seqInfo.version }}</span>
-        </span>
         <span>
           Created: <span class="text-text" :title="formatDateTime(inst.created_at)">{{ formatRelative(inst.created_at) }}</span>
         </span>

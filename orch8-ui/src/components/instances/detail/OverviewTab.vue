@@ -55,6 +55,10 @@ function navigateChild(row: TaskInstance) {
         <KeyValue label="ID">
           <span class="mono text-[12px]">{{ instance.id }}</span>
         </KeyValue>
+        <!-- Instance Key sits directly under ID — the primary human identifier. -->
+        <KeyValue v-if="instance.idempotency_key" label="Instance Key">
+          <span class="mono text-[12px]">{{ instance.idempotency_key }}</span>
+        </KeyValue>
         <KeyValue label="Sequence">
           <router-link
             :to="`/sequences/${instance.sequence_id}`"
@@ -85,9 +89,6 @@ function navigateChild(row: TaskInstance) {
         </KeyValue>
         <KeyValue v-if="instance.next_fire_at" label="Next fire">
           <span :title="formatDateTime(instance.next_fire_at)">{{ formatRelative(instance.next_fire_at) }}</span>
-        </KeyValue>
-        <KeyValue v-if="instance.idempotency_key" label="Instance Key">
-          <span class="mono text-[12px]">{{ instance.idempotency_key }}</span>
         </KeyValue>
         <KeyValue v-if="instance.concurrency_key" label="Concurrency key">
           <span class="mono text-[12px]">{{ instance.concurrency_key }}</span>

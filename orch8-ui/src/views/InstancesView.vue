@@ -87,12 +87,6 @@ const searchFilter = ref('')
 const PAGE_SIZE = 50
 const offset = ref(0)
 
-// Reset offset when filter changes
-watch([stateFilter, nsFilter, seqFilter, searchFilter], () => {
-  offset.value = 0
-  instStore.clearSelection()
-})
-
 function buildQuery() {
   return {
     tenant_id:   conn.tenantId || undefined,
@@ -106,6 +100,22 @@ function buildQuery() {
 
 const loader = useAsync((signal) => listInstances(buildQuery(), signal))
 const { data, loading, error, errorText } = loader
+
+// Server-side filters (state / namespace / sequence) change the query, so reset
+// paging and reload IMMEDIATELY. Previously nothing reloaded on a filter change, so a
+// dropdown pick only took effect on the next 5s poll tick — that was the >2s "filter
+// lag". useAsync aborts the in-flight request on each re-run, so rapid changes (incl.
+// typing in Namespace) never race; the last one wins.
+watch([stateFilter, nsFilter, seqFilter], () => {
+  offset.value = 0
+  instStore.clearSelection()
+  void loader.run()
+})
+// The free-text search filters the already-fetched page client-side (see `rows`), so
+// it must NOT round-trip — just clear any now-stale selection.
+watch(searchFilter, () => {
+  instStore.clearSelection()
+})
 
 // Refresh the instances AND keep the sequence catalog current (it resolves each
 // row's sequence_id → name/version and feeds the search dropdown). The catalog call
