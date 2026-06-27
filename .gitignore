@@ -30,7 +30,4 @@ var/
 
 # all private prompt
 prompt/
-ARCHITECTURE.md
-CLAUDE.md
-DESIGN.md
 FDD.md
